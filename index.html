@@ -71,41 +71,43 @@
     .orb {
       position: absolute;
       border-radius: 50%;
-      filter: blur(80px);
-      animation: float 12s ease-in-out infinite;
+      will-change: transform;
+      /* Use translate3d to keep animation on GPU compositor thread */
+      animation: float 16s ease-in-out infinite;
     }
 
     .orb-1 {
-      width: 400px;
-      height: 400px;
-      background: rgba(0, 240, 255, 0.12);
-      top: -10%;
-      left: -5%;
+      width: 500px;
+      height: 500px;
+      /* Bake the blur into the gradient instead of using filter:blur */
+      background: radial-gradient(circle, rgba(0, 240, 255, 0.18) 0%, transparent 70%);
+      top: -15%;
+      left: -10%;
       animation-delay: 0s;
     }
 
     .orb-2 {
-      width: 350px;
-      height: 350px;
-      background: rgba(139, 92, 246, 0.15);
-      top: 40%;
-      right: -8%;
-      animation-delay: -4s;
+      width: 450px;
+      height: 450px;
+      background: radial-gradient(circle, rgba(139, 92, 246, 0.2) 0%, transparent 70%);
+      top: 35%;
+      right: -12%;
+      animation-delay: -6s;
     }
 
     .orb-3 {
-      width: 300px;
-      height: 300px;
-      background: rgba(232, 121, 249, 0.1);
-      bottom: -5%;
-      left: 30%;
-      animation-delay: -8s;
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, rgba(232, 121, 249, 0.14) 0%, transparent 70%);
+      bottom: -10%;
+      left: 25%;
+      animation-delay: -11s;
     }
 
     @keyframes float {
-      0%, 100% { transform: translate(0, 0) scale(1); }
-      33% { transform: translate(30px, -20px) scale(1.05); }
-      66% { transform: translate(-20px, 15px) scale(0.95); }
+      0%, 100% { transform: translate3d(0, 0, 0); }
+      33% { transform: translate3d(25px, -18px, 0); }
+      66% { transform: translate3d(-18px, 12px, 0); }
     }
 
     /* Scanline overlay */
@@ -153,8 +155,6 @@
       background: rgba(0, 240, 255, 0.06);
       border: 1px solid rgba(0, 240, 255, 0.25);
       border-radius: 100px;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
     }
 
     .badge::before {
@@ -205,12 +205,12 @@
 
     .stat {
       padding: 0.75rem 1.5rem;
-      background: var(--glass);
+      background: rgba(12, 18, 32, 0.7);
       border: 1px solid var(--glass-border);
       border-radius: 12px;
-      backdrop-filter: blur(20px) saturate(1.4);
-      -webkit-backdrop-filter: blur(20px) saturate(1.4);
-      box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glow-violet);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      box-shadow: inset 0 1px 0 var(--glass-highlight);
     }
 
     .stat-value {
@@ -242,11 +242,9 @@
       padding: 1.5rem;
       text-decoration: none;
       color: inherit;
-      background: var(--glass);
+      background: rgba(12, 18, 32, 0.7);
       border: 1px solid var(--glass-border);
       border-radius: 20px;
-      backdrop-filter: blur(24px) saturate(1.5);
-      -webkit-backdrop-filter: blur(24px) saturate(1.5);
       box-shadow:
         inset 0 1px 0 var(--glass-highlight),
         0 8px 32px rgba(0, 0, 0, 0.4);
@@ -397,8 +395,6 @@
       background: rgba(255, 159, 67, 0.08);
       border: 1px solid rgba(255, 159, 67, 0.35);
       border-radius: 10px;
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
       transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
     }
 
@@ -424,8 +420,6 @@
       background: rgba(0, 240, 255, 0.06);
       border: 1px solid rgba(0, 240, 255, 0.25);
       border-radius: 10px;
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
       transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
     }
 

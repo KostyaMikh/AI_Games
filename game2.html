@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Биом Титана: Симулятор Выживания</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #050f0a;
+            color: #d2fad2;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #ui-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            box-sizing: border-box;
+            padding: 20px;
+        }
+
+        .hud-panel {
+            background: rgba(10, 30, 15, 0.85);
+            border: 2px solid #2e7d32;
+            border-radius: 8px;
+            padding: 15px;
+            pointer-events: auto;
+            box-shadow: 0 0 15px rgba(46, 125, 50, 0.5);
+        }
+
+        .top-hud {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .stat-box {
+            font-size: 18px;
+            font-weight: bold;
+            text-shadow: 0 0 5px #00ff00;
+        }
+
+        .progress-bar-container {
+            width: 250px;
+            background: #111;
+            border: 1px solid #2e7d32;
+            height: 20px;
+            margin-top: 5px;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            width: 100%;
+            transition: width 0.3s ease, background-color 0.3s;
+        }
+
+        #energy-bar { background-color: #4caf50; }
+        #journey-bar { background-color: #2196f3; width: 0%; }
+
+        /* Окно взлома систем */
+        #hack-window {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 400px;
+            background: rgba(5, 15, 5, 0.95);
+            border: 3px solid #ff3d00;
+            box-shadow: 0 0 30px rgba(255, 61, 0, 0.7);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            display: none;
+            pointer-events: auto;
+            z-index: 10;
+        }
+
+        #hack-window.active { display: block; }
+        
+        .hack-title {
+            color: #ff3d00;
+            font-size: 22px;
+            margin-bottom: 15px;
+            animation: blink 1s infinite;
+        }
+
+        .hack-code {
+            font-size: 28px;
+            letter-spacing: 5px;
+            margin: 15px 0;
+            color: #ffea00;
+            background: #220000;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        #hack-input {
+            background: #000;
+            border: 2px solid #ff3d00;
+            color: #fff;
+            font-size: 24px;
+            width: 80%;
+            text-align: center;
+            padding: 5px;
+            text-transform: uppercase;
+            font-family: inherit;
+        }
+
+        /* Окна экранов состояния игры */
+        .screen-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(5, 10, 5, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+            pointer-events: auto;
+        }
+
+        .screen-overlay h1 {
+            font-size: 45px;
+            margin-bottom: 20px;
+            text-shadow: 0 0 10px currentColor;
+        }
+
+        .btn {
+            background: #2e7d32;
+            color: #fff;
+            border: none;
+            padding: 15px 30px;
+            font-size: 20px;
+            font-family: inherit;
+            cursor: pointer;
+            border-radius: 5px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            transition: background 0.2s;
+        }
+
+        .btn:hover { background: #388e3c; }
+
+        #disaster-alert {
+            position: absolute;
+            top: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ff3d00;
+            font-size: 24px;
+            font-weight: bold;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 5px;
+            border: 1px solid #ff3d00;
+            display: none;
+            text-align: center;
+            z-index: 5;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+    </style>
+    <link rel="stylesheet" href="hub-nav.css">
+</head>
+<body>
+    <a class="hub-nav" href="index.html">AI-GAMES</a>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-container">
+        <div class="hud-panel top-hud">
+            <div>
+                <div class="stat-box">ЖИЗНЕННАЯ ЭНЕРГИЯ БИОМА</div>
+                <div class="progress-bar-container">
+                    <div id="energy-bar" class="progress-bar"></div>
+                </div>
+            </div>
+            <div style="text-align: right;">
+                <div class="stat-box">ПУТЬ ДО ОАЗИСА</div>
+                <div class="progress-bar-container">
+                    <div id="journey-bar" class="progress-bar"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="disaster-alert">ВНИМАНИЕ: СЕЙСМИЧЕСКИЙ ТОЛЧЕК ТИТАНА!</div>
+
+        <div class="hud-panel" style="width: calc(100% - 30px); text-align: center;">
+            <span style="color: #4caf50; font-weight: bold;">[ЛКМ]</span> Вырастить Защитную Лозу (Вампиризм: урон лечит биом) | 
+            <span style="color: #ff9800; font-weight: bold;">[Удерживать ЛКМ на Лозе]</span> Зарядить атаку лозы
+        </div>
+    </div>
+
+    <div id="hack-window">
+        <div class="hack-title">!!! НЕЙРО-СИСТЕМА ЗАРАЖЕНА !!!</div>
+        <p style="font-size:14px; color:#aaa;">Паразиты взламывают нервный узел Титана. Введите защитный антикод для очистки:</p>
+        <div class="hack-code" id="target-code">A7B2</div>
+        <input type="text" id="hack-input" maxlength="4" autocomplete="off">
+        <p style="font-size:12px; color:#ff3d00; margin-top:15px;" id="hack-timer">ВРЕМЯ НА ПЕРЕЗАГРУЗКУ: 10.0с</p>
+    </div>
+
+    <div id="start-screen" class="screen-overlay" style="color: #4caf50;">
+        <h1>БИОМ ТИТАНА</h1>
+        <p style="max-width: 600px; text-align: center; line-height: 1.6; margin-bottom: 30px;">
+            Вы — разумная экосистема джунглей, растущая на спине гигантского древнего существа. 
+            Титан бредет через мертвые земли к Оазису. Защищайте джунгли от паразитов, перехватывайте взломы его нервной системы и справляйтесь с природными катастрофами.
+        </p>
+        <button class="btn" onclick="startGame()">НАЧАТЬ СИМУЛЯЦИЮ</button>
+    </div>
+
+    <div id="win-screen" class="screen-overlay" style="color: #2196f3; display: none;">
+        <h1>ОАЗИС ДОСТИГНУТ!</h1>
+        <p style="margin-bottom: 30px;">Вы успешно сохранили экосистему джунглей на спине Титана.</p>
+        <button class="btn" onclick="location.reload()">ИГРАТЬ СНОВА</button>
+    </div>
+
+    <div id="lose-screen" class="screen-overlay" style="color: #ff3d00; display: none;">
+        <h1>БИОМ УНИЧТОЖЕН</h1>
+        <p id="lose-reason" style="margin-bottom: 30px;">Энергия джунглей иссякла.</p>
+        <button class="btn" onclick="location.reload()">ПОВТОРИТЬ ПОПЫТКУ</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Адаптация размеров холста
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Игровые параметры
+        let gameState = 'start'; // start, play, hack, win, lose
+        let energy = 100;
+        let journeyProgress = 0;
+        const totalJourney = 100;
+
+        // Объекты игры
+        let vines = [];
+        let enemies = [];
+        let particles = [];
+        
+        // Переменные для систем
+        let lastDisasterTime = 0;
+        let disasterActive = false;
+        let currentDisaster = "";
+        let disasterTimer = 0;
+
+        // Взлом систем
+        let hackTimer = 0;
+        let hackTargetCode = "";
+        let hackTimeLimit = 10;
+
+        // Изображения / Ассеты (Генерация процедурной графики)
+        // Текстура кожи гиганта
+        const titanSkinPattern = document.createElement('canvas');
+        titanSkinPattern.width = 128;
+        titanSkinPattern.height = 128;
+        const pCtx = titanSkinPattern.getContext('2d');
+        pCtx.fillStyle = '#1e251f';
+        pCtx.fillRect(0,0,128,128);
+        pCtx.fillStyle = '#151a16';
+        for(let i=0; i<20; i++){
+            pCtx.fillRect(Math.random()*128, Math.random()*128, Math.random()*30+10, Math.random()*10+5);
+        }
+
+        // Класс Защитных Лоз (Вампиризм)
+        class Vine {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.targetY = y - (100 + Math.random()*100);
+                this.currentY = y;
+                this.length = 0;
+                this.maxLength = 120 + Math.random() * 80;
+                this.angle = (Math.random() - 0.5) * 0.4;
+                this.charge = 0;
+                this.isCharging = false;
+                this.thickness = 8 + Math.random()*6;
+            }
+
+            update() {
+                if (this.currentY > this.y - this.maxLength) {
+                    this.currentY -= 2; 
+                }
+                if (this.isCharging && this.charge < 100) {
+                    this.charge += 2;
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+
+                // Отрисовка стебля лозы
+                ctx.strokeStyle = '#2e7d32';
+                ctx.lineWidth = this.thickness;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.quadraticCurveTo(Math.sin(this.currentY * 0.05) * 15, - (this.y - this.currentY)/2, 0, - (this.y - this.currentY));
+                ctx.stroke();
+
+                // Отрисовка светящихся листьев (Энергия Вампиризма)
+                ctx.fillStyle = `rgb(${46 + this.charge * 2}, ${125 + this.charge}, 50)`;
+                ctx.shadowColor = '#4caf50';
+                ctx.shadowBlur = this.charge > 0 ? this.charge / 3 : 5;
+                
+                ctx.beginPath();
+                ctx.arc(0, - (this.y - this.currentY), 8 + (this.charge/10), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // Класс Врагов (Паразиты Нейро-систем)
+        class Parasite {
+            constructor() {
+                this.x = Math.random() * canvas.width;
+                this.y = -30;
+                this.speed = 1 + Math.random() * 2;
+                this.hp = 30 + Math.random() * 40;
+                this.maxHp = this.hp;
+                this.size = 15 + Math.random() * 15;
+                this.wiggle = 0;
+                this.wiggleSpeed = 0.05 + Math.random()*0.05;
+                this.type = Math.random() > 0.85 ? 'hacker' : 'crawler'; // Хакеры вызывают взлом систем
+            }
+
+            update() {
+                this.y += this.speed;
+                this.wiggle += this.wiggleSpeed;
+                this.x += Math.sin(this.wiggle) * 0.8;
+
+                // Достижение дна (кожи Титана) наносит урон биому
+                if (this.y > canvas.height - 100) {
+                    energy -= Math.floor(this.size / 2);
+                    if(this.type === 'hacker' && gameState === 'play') {
+                        triggerSystemHack();
+                    }
+                    return false; 
+                }
+                return true;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                
+                // Внешний вид паразита
+                if(this.type === 'hacker') {
+                    ctx.fillStyle = '#ff3d00';
+                    ctx.shadowColor = '#ff3d00';
+                    ctx.shadowBlur = 10;
+                } else {
+                    ctx.fillStyle = '#9c27b0';
+                    ctx.shadowColor = '#000';
+                    ctx.shadowBlur = 0;
+                }
+
+                // Тело насекомого/паразита
+                ctx.beginPath();
+                ctx.ellipse(0, 0, this.size, this.size * 0.7, Math.PI/2, 0, Math.PI*2);
+                ctx.fill();
+
+                // Процедурные усики/лапки
+                ctx.strokeStyle = ctx.fillStyle;
+                ctx.lineWidth = 2;
+                for(let i = -1; i <= 1; i += 2) {
+                    ctx.beginPath();
+                    ctx.moveTo(i * 5, 0);
+                    ctx.lineTo(i * (this.size + 10), Math.sin(this.wiggle)*5);
+                    ctx.stroke();
+                }
+
+                // Шкала здоровья паразита
+                let hpPercent = this.hp / this.maxHp;
+                ctx.fillStyle = 'rgba(255,0,0,0.5)';
+                ctx.fillRect(-this.size, -this.size - 10, this.size * 2, 4);
+                ctx.fillStyle = '#00ff00';
+                ctx.fillRect(-this.size, -this.size - 10, (this.size * 2) * hpPercent, 4);
+
+                ctx.restore();
+            }
+        }
+
+        // Класс частиц для эффектов вампиризма и катастроф
+        class Particle {
+            constructor(x, y, color, vx, vy, size = 3) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.vx = vx;
+                this.vy = vy;
+                this.alpha = 1;
+                this.size = size;
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.alpha -= 0.02;
+                return this.alpha > 0;
+            }
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI*2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // Старт игры
+        function startGame() {
+            document.getElementById('start-screen').style.display = 'none';
+            gameState = 'play';
+            energy = 100;
+            journeyProgress = 0;
+            vines = [];
+            enemies = [];
+            particles = [];
+            lastDisasterTime = Date.now();
+            
+            // Инициализируем начальные джунгли на спине
+            for(let i = 0; i < 6; i++) {
+                vines.push(new Vine(100 + Math.random() * (canvas.width - 200), canvas.height - 80));
+            }
+        }
+
+        // Запуск механики: Процедурные катастрофы
+        function triggerDisaster() {
+            disasterActive = true;
+            disasterTimer = 180; // длительность эффекта кадров
+            const disasters = ["СЕЙСМИЧЕСКИЙ ТОЛЧЕК", "ВСПЛЕСК МАГМЫ ТИТАНА", "ВЫБРОС ТОКСИЧНЫХ СПОР"];
+            currentDisaster = disasters[Math.floor(Math.random() * disasters.length)];
+            
+            const alertBox = document.getElementById('disaster-alert');
+            alertBox.innerText = `ВНИМАНИЕ: ${currentDisaster}!`;
+            alertBox.style.display = 'block';
+
+            // Немедленный эффект катастрофы
+            if (currentDisaster === "СЕЙСМИЧЕСКИЙ ТОЛЧЕК") {
+                energy -= 15;
+                if(vines.length > 2) vines.splice(0, 2); // ломает пару лоз
+            }
+        }
+
+        // Запуск механики: Взлом систем Титана
+        function triggerSystemHack() {
+            gameState = 'hack';
+            document.getElementById('hack-window').classList.add('active');
+            hackTargetCode = Math.random().toString(36).substring(2, 6).toUpperCase();
+            document.getElementById('target-code').innerText = hackTargetCode;
+            let inputField = document.getElementById('hack-input');
+            inputField.value = "";
+            inputField.focus();
+            hackTimer = hackTimeLimit;
+        }
+
+        // Проверка ввода кода при взломе
+        document.getElementById('hack-input').addEventListener('input', (e) => {
+            if (e.target.value.toUpperCase() === hackTargetCode) {
+                // Успешный взлом / Очистка
+                gameState = 'play';
+                document.getElementById('hack-window').classList.remove('active');
+                // Даем бонус энергии за успешную очистку систем
+                energy = Math.min(100, energy + 10);
+                for(let i=0; i<20; i++) {
+                    particles.push(new Particle(canvas.width/2 + (Math.random()-0.5)*200, canvas.height/2, '#00ff00', (Math.random()-0.5)*5, (Math.random()-0.5)*5, 5));
+                }
+            }
+        });
+
+        // Клик мышкой: Выращивание новых лоз или зарядка существующих
+        canvas.addEventListener('mousedown', (e) => {
+            if (gameState !== 'play') return;
+
+            let clickedVine = null;
+            // Проверяем, кликнули ли по верхушке существующей лозы
+            for (let vine of vines) {
+                let dist = Math.hypot(e.clientX - vine.x, e.clientY - vine.currentY);
+                if (dist < 30) {
+                    clickedVine = vine;
+                    break;
+                }
+            }
+
+            if (clickedVine) {
+                clickedVine.isCharging = true;
+            } else {
+                // Тратим немного энергии на выращивание новой защитной лозы джунглей
+                if (energy > 10) {
+                    energy -= 5;
+                    vines.push(new Vine(e.clientX, canvas.height - 80));
+                }
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            for (let vine of vines) {
+                if (vine.isCharging) {
+                    // Реализация МЕХАНИКИ ВАМПИРИЗМА: Выпуск атакующего снаряда
+                    releaseVineAttack(vine);
+                    vine.isCharging = false;
+                    vine.charge = 0;
+                }
+            }
+        });
+
+        function releaseVineAttack(vine) {
+            // Создаем снаряд-шип джунглей, летящий вверх
+            let power = vine.charge / 10 + 2;
+            let projectile = {
+                x: vine.x,
+                y: vine.currentY,
+                vy: -power * 1.5,
+                power: power
+            };
+            
+            // Логика полета снаряда и проверки столкновений
+            let attackInterval = setInterval(() => {
+                projectile.y += projectile.vy;
+                
+                // Визуальные частицы лозы
+                particles.push(new Particle(projectile.x, projectile.y, '#8bc34a', (Math.random()-0.5)*2, (Math.random()-0.5)*2, 2));
+
+                // Проверка попадания во врагов
+                for (let i = enemies.length - 1; i >= 0; i--) {
+                    let enemy = enemies[i];
+                    let dist = Math.hypot(projectile.x - enemy.x, projectile.y - enemy.y);
+                    if (dist < enemy.size + 10) {
+                        // Наносим урон
+                        enemy.hp -= projectile.power * 10;
+                        
+                        // МЕХАНИКА ВАМПИРИЗМА: урон конвертируется в лечение биома
+                        let drainLife = Math.floor(projectile.power * 2);
+                        energy = Math.min(100, energy + drainLife);
+
+                        // Эффект поглощения жизни (кроваво-зеленые частицы летят обратно к биому)
+                        for(let j=0; j<8; j++){
+                            particles.push(new Particle(enemy.x, enemy.y, '#e91e63', (Math.random()-0.5)*6, Math.random()*4 + 2, 4));
+                        }
+
+                        clearInterval(attackInterval);
+                        return;
+                    }
+                }
+
+                if (projectile.y < 0) clearInterval(attackInterval);
+            }, 1000/60);
+        }
+
+        // Игровой цикл обновления и отрисовки
+        function update(time) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 1. ОТРИСОВКА ФОНА И ВИЗУАЛЬНОГО СТИЛЯ (Спина гигантского Титана)
+            let skinPattern = ctx.createPattern(titanSkinPattern, 'repeat');
+            ctx.fillStyle = skinPattern;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Движение горизонта / Эффект ходьбы существа
+            let walkBobbing = Math.sin(Date.now() * 0.002) * 5;
+            
+            // Нижний слой — «Мясистая/каменистая» граница спины Титана
+            ctx.fillStyle = '#0a140c';
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height);
+            ctx.lineTo(0, canvas.height - 80 + walkBobbing);
+            ctx.quadraticCurveTo(canvas.width/2, canvas.height - 110 + walkBobbing, canvas.width, canvas.height - 80 + walkBobbing);
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.fill();
+
+            // Мох и мелкие травинки на спине
+            ctx.fillStyle = '#1b4d22';
+            for (let i = 0; i < canvas.width; i += 40) {
+                ctx.fillRect(i, canvas.height - 90 + walkBobbing + Math.sin(i)*5, 15, 20);
+            }
+
+            if (gameState === 'play' || gameState === 'hack') {
+                // Обновление прогресса путешествия Титана
+                journeyProgress += 0.03;
+                document.getElementById('journey-bar').style.width = `${Math.min(100, journeyProgress)}%`;
+                document.getElementById('energy-bar').style.width = `${Math.max(0, energy)}%`;
+
+                if (journeyProgress >= totalJourney) {
+                    gameState = 'win';
+                    document.getElementById('win-screen').style.display = 'flex';
+                }
+                if (energy <= 0) {
+                    gameState = 'lose';
+                    document.getElementById('lose-reason').innerText = "Энергия биома истощена паразитами или катаклизмами.";
+                    document.getElementById('lose-screen').style.display = 'flex';
+                }
+
+                // Процедурное появление паразитов
+                if (Math.random() < 0.02 + (journeyProgress * 0.0003)) {
+                    enemies.push(new Parasite());
+                }
+
+                // Таймер процедурных катастроф
+                if (Date.now() - lastDisasterTime > 17000) {
+                    triggerDisaster();
+                    lastDisasterTime = Date.now();
+                }
+
+                // Обработка активной катастрофы
+                if (disasterActive) {
+                    disasterTimer--;
+                    if (disasterTimer <= 0) {
+                        disasterActive = false;
+                        document.getElementById('disaster-alert').style.display = 'none';
+                    }
+                    // Визуальные эффекты катастроф
+                    if (currentDisaster === "ВСПЛЕСК МАГМЫ ТИТАНА") {
+                        if (Math.random() < 0.3) {
+                            particles.push(new Particle(Math.random() * canvas.width, canvas.height, '#ff5722', (Math.random()-0.5)*3, -Math.random()*8 - 4, 6));
+                            energy -= 0.08; // Постепенный урон биому от жара
+                        }
+                    } else if (currentDisaster === "ВЫБРОС ТОКСИЧНЫХ СПОР") {
+                        if (Math.random() < 0.4) {
+                            particles.push(new Particle(Math.random() * canvas.width, 0, '#00e676', (Math.random()-0.5)*2, Math.random()*3 + 1, 4));
+                            energy -= 0.05;
+                        }
+                    } else if (currentDisaster === "СЕЙСМИЧЕСКИЙ ТОЛЧЕК") {
+                        // Тряска экрана за счет смещения контекста
+                        ctx.translate((Math.random()-0.5)*6, (Math.random()-0.5)*6);
+                    }
+                }
+
+                // Логика взлома систем (Нейро-интерфейса)
+                if (gameState === 'hack') {
+                    hackTimer -= 1/60;
+                    document.getElementById('hack-timer').innerText = `ВРЕМЯ НА ПЕРЕЗАГРУЗКУ: ${Math.max(0, hackTimer).toFixed(1)}с`;
+                    if (hackTimer <= 0) {
+                        gameState = 'lose';
+                        document.getElementById('hack-window').classList.remove('active');
+                        document.getElementById('lose-reason').innerText = "Паразиты полностью взломали и отключили нервную систему Титана.";
+                        document.getElementById('lose-screen').style.display = 'flex';
+                    }
+                }
+            }
+
+            // Отрисовка и обновление Защитных Лоз
+            vines.forEach(vine => {
+                if (gameState === 'play') vine.update();
+                vine.draw();
+            });
+
+            // Отрисовка и обновление Паразитов
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let enemy = enemies[i];
+                if (gameState === 'play') {
+                    let alive = enemy.update();
+                    if (!alive || enemy.hp <= 0) {
+                        enemies.splice(i, 1);
+                        continue;
+                    }
+                }
+                enemy.draw();
+            }
+
+            // Отрисовка частиц
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                let active = p.update();
+                if (!active) {
+                    particles.splice(i, 1);
+                } else {
+                    p.draw();
+                }
+            }
+
+            requestAnimationFrame(update);
+        }
+
+        requestAnimationFrame(update);
+    </script>
+</body>
+</html>

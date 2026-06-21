@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Derelict Station Royale</title>
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;
+  overflow:hidden;
+  background:#05070d;
+  color:#d8ecff;
+  font-family:Arial,sans-serif;
+}
+canvas{
+  display:block;
+  background:radial-gradient(circle at center,#111827 0%,#05070d 80%);
+}
+#ui{
+  position:absolute;
+  top:10px;
+  left:10px;
+  z-index:10;
+  background:rgba(0,0,0,.55);
+  border:1px solid #3b4f67;
+  padding:12px;
+  width:320px;
+  backdrop-filter:blur(4px);
+}
+#title{
+  font-size:22px;
+  color:#8fe6ff;
+  margin-bottom:6px;
+}
+.bar{
+  height:14px;
+  background:#1d2433;
+  margin:5px 0;
+  border:1px solid #42516e;
+  position:relative;
+}
+.fill{
+  height:100%;
+}
+#hpFill{background:#39d98a}
+#shieldFill{background:#4bb7ff}
+.small{font-size:12px;color:#aac5dd}
+button{
+  margin-top:8px;
+  width:100%;
+  padding:10px;
+  background:#1b2f4b;
+  border:1px solid #5f91c9;
+  color:white;
+  cursor:pointer;
+}
+button:hover{background:#27466f}
+#overlay{
+  position:absolute;
+  inset:0;
+  background:rgba(0,0,0,.78);
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  flex-direction:column;
+  z-index:20;
+  text-align:center;
+}
+.overlayTitle{
+  font-size:54px;
+  color:#9fe7ff;
+  margin-bottom:20px;
+  text-shadow:0 0 15px #53c6ff;
+}
+.overlayText{
+  max-width:760px;
+  line-height:1.5;
+  color:#bfd4e7;
+}
+kbd{
+  background:#263242;
+  padding:2px 6px;
+  border-radius:4px;
+}
+</style>
+<link rel="stylesheet" href="hub-nav.css">
+</head>
+<body>
+<a class="hub-nav" href="index.html">AI-GAMES</a>
+<div id="ui">
+  <div id="title">DERELICT STATION ROYALE</div>
+  <div>HP</div>
+  <div class="bar"><div class="fill" id="hpFill"></div></div>
+  <div>Shield</div>
+  <div class="bar"><div class="fill" id="shieldFill"></div></div>
+  <div id="stats"></div>
+  <div class="small">
+    WASD — движение<br>
+    Мышь — прицеливание<br>
+    ЛКМ — стрельба<br>
+    <kbd>E</kbd> — подобрать лут<br>
+    <kbd>SPACE</kbd> — катапульта
+  </div>
+</div>
+
+<div id="overlay">
+  <div class="overlayTitle">DERELICT STATION ROYALE</div>
+  <div class="overlayText">
+    Сражайся на заброшенной космической станции против дронов-выживальщиков.<br><br>
+    Обязательные механики реализованы:<br>
+    • Мета-прогрессия: кристаллы остаются между забегами и улучшают персонажа.<br>
+    • Случайный лут: оружие, щиты, аптечки и ускорители появляются случайно.<br>
+    • Катапульта: мощный рывок через карту с уроном при приземлении.<br><br>
+    Победи всех врагов и выживи в зоне распада станции.
+  </div>
+  <button id="startBtn">Начать забег</button>
+</div>
+
+<canvas id="game"></canvas>
+<script>
+const canvas=document.getElementById('game');
+const ctx=canvas.getContext('2d');
+const overlay=document.getElementById('overlay');
+const startBtn=document.getElementById('startBtn');
+const hpFill=document.getElementById('hpFill');
+const shieldFill=document.getElementById('shieldFill');
+const stats=document.getElementById('stats');
+
+function resize(){canvas.width=window.innerWidth;canvas.height=window.innerHeight}
+window.addEventListener('resize',resize);
+resize();
+
+const keys={};
+const mouse={x:0,y:0,down:false};
+window.addEventListener('keydown',e=>{
+  if(e.code==='Space') e.preventDefault();
+  const k=e.key.toLowerCase();
+  keys[k]=true;
+  if(e.code==='Space'){keys[' ']=true;keys.space=true;}
+});
+window.addEventListener('keyup',e=>{
+  const k=e.key.toLowerCase();
+  keys[k]=false;
+  if(e.code==='Space'){keys[' ']=false;keys.space=false;}
+});
+window.addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY});
+window.addEventListener('mousedown',()=>mouse.down=true);
+window.addEventListener('mouseup',()=>mouse.down=false);
+
+const meta=JSON.parse(localStorage.getItem('stationMeta')||'{"crystals":0,"hp":0,"damage":0}');
+
+let player,enemies,bullets,loot,particles,zone,gameOver=false,victory=false;
+
+function rand(a,b){return Math.random()*(b-a)+a}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+
+function createPlayer(){
+  return {
+    x:2000,y:2000,r:18,
+    hp:100+meta.hp*15,
+    maxHp:100+meta.hp*15,
+    shield:50,
+    maxShield:50,
+    damage:18+meta.damage*3,
+    speed:3,
+    angle:0,
+    fireCd:0,
+    catapultCd:0,
+    crystals:0
+  }
+}
+
+function spawnEnemy(){
+  return {
+    x:rand(200,3800),
+    y:rand(200,3800),
+    r:16,
+    hp:60,
+    speed:1.4+Math.random()*0.7,
+    fireCd:rand(30,90)
+  }
+}
+
+function spawnLoot(x,y){
+  const types=['med','shield','damage','speed'];
+  loot.push({x,y,r:14,type:types[Math.floor(Math.random()*types.length)]});
+}
+
+function startGame(){
+  player=createPlayer();
+  enemies=[];
+  bullets=[];
+  loot=[];
+  particles=[];
+  zone={x:2000,y:2000,r:1800,target:300};
+  gameOver=false;
+  victory=false;
+
+  for(let i=0;i<18;i++) enemies.push(spawnEnemy());
+  for(let i=0;i<30;i++) spawnLoot(rand(200,3800),rand(200,3800));
+
+  overlay.style.display='none';
+  requestAnimationFrame(loop);
+}
+
+startBtn.onclick=startGame;
+
+function shoot(x,y,angle,speed,damage,enemy=false){
+  bullets.push({x,y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,r:4,damage,enemy});
+}
+
+function explode(x,y,color,count){
+  for(let i=0;i<count;i++){
+    particles.push({x,y,vx:rand(-4,4),vy:rand(-4,4),life:rand(20,50),color});
+  }
+}
+
+function update(){
+  if(gameOver)return;
+
+  zone.r-=0.03;
+  if(zone.r<zone.target) zone.r=zone.target;
+
+  let dx=0,dy=0;
+  if(keys['w'])dy--;
+  if(keys['s'])dy++;
+  if(keys['a'])dx--;
+  if(keys['d'])dx++;
+
+  const len=Math.hypot(dx,dy)||1;
+  player.x+=dx/len*player.speed;
+  player.y+=dy/len*player.speed;
+
+  player.x=Math.max(50,Math.min(3950,player.x));
+  player.y=Math.max(50,Math.min(3950,player.y));
+
+  const camX=player.x-canvas.width/2;
+  const camY=player.y-canvas.height/2;
+
+  player.angle=Math.atan2(mouse.y-canvas.height/2,mouse.x-canvas.width/2);
+
+  if(mouse.down&&player.fireCd<=0){
+    shoot(player.x,player.y,player.angle,9,player.damage);
+    player.fireCd=12;
+  }
+
+  if((keys[' ']||keys.space)&&player.catapultCd<=0){
+    player.x+=Math.cos(player.angle)*260;
+    player.y+=Math.sin(player.angle)*260;
+    player.catapultCd=240;
+    explode(player.x,player.y,'#7ce7ff',30);
+    enemies.forEach(e=>{
+      if(dist(player,e)<120){
+        e.hp-=40;
+      }
+    });
+  }
+
+  if(player.fireCd>0)player.fireCd--;
+  if(player.catapultCd>0)player.catapultCd--;
+
+  for(let idx=enemies.length-1;idx>=0;idx--){
+    const e=enemies[idx];
+    const a=Math.atan2(player.y-e.y,player.x-e.x);
+    e.x+=Math.cos(a)*e.speed;
+    e.y+=Math.sin(a)*e.speed;
+
+    if(e.fireCd<=0){
+      shoot(e.x,e.y,a,5,10,true);
+      e.fireCd=70+Math.random()*60;
+    }
+    e.fireCd--;
+
+    if(e.hp<=0){
+      explode(e.x,e.y,'#ff6f91',35);
+      spawnLoot(e.x,e.y);
+      player.crystals+=1;
+      enemies.splice(idx,1);
+    }
+  }
+
+  for(let idx=bullets.length-1;idx>=0;idx--){
+    const b=bullets[idx];
+    b.x+=b.vx;
+    b.y+=b.vy;
+    let hit=false;
+
+    if(b.enemy){
+      if(dist(b,player)<player.r+b.r){
+        if(player.shield>0){
+          player.shield-=b.damage;
+          if(player.shield<0){
+            player.hp+=player.shield;
+            player.shield=0;
+          }
+        } else player.hp-=b.damage;
+        explode(b.x,b.y,'#8ecfff',8);
+        hit=true;
+      }
+    } else {
+      for(let i=0;i<enemies.length;i++){
+        const e=enemies[i];
+        if(dist(b,e)<e.r+b.r){
+          e.hp-=b.damage;
+          explode(b.x,b.y,'#ffd166',8);
+          hit=true;
+          break;
+        }
+      }
+    }
+    if(hit) bullets.splice(idx,1);
+  }
+
+  for(let idx=loot.length-1;idx>=0;idx--){
+    const l=loot[idx];
+    if(dist(player,l)<50&&keys['e']){
+      if(l.type==='med') player.hp=Math.min(player.maxHp,player.hp+35);
+      if(l.type==='shield') player.shield=Math.min(player.maxShield,player.shield+35);
+      if(l.type==='damage') player.damage+=4;
+      if(l.type==='speed') player.speed+=0.35;
+      explode(l.x,l.y,'#b0ffcf',15);
+      loot.splice(idx,1);
+    }
+  }
+
+  for(let idx=particles.length-1;idx>=0;idx--){
+    const p=particles[idx];
+    p.x+=p.vx;
+    p.y+=p.vy;
+    p.life--;
+    if(p.life<=0) particles.splice(idx,1);
+  }
+
+  if(dist(player,zone)>zone.r){
+    player.hp-=0.15;
+  }
+
+  if(player.hp<=0){
+    endGame(false);
+  }
+
+  if(enemies.length===0){
+    endGame(true);
+  }
+
+  draw(camX,camY);
+}
+
+function endGame(win){
+  gameOver=true;
+  victory=win;
+  meta.crystals+=player.crystals;
+  if(win){
+    meta.hp+=1;
+    meta.damage+=1;
+  }
+  localStorage.setItem('stationMeta',JSON.stringify(meta));
+
+  overlay.innerHTML=`
+    <div class="overlayTitle">${win?'ПОБЕДА':'ПОРАЖЕНИЕ'}</div>
+    <div class="overlayText">
+      Собрано кристаллов: ${player.crystals}<br>
+      Общие кристаллы: ${meta.crystals}<br><br>
+      Мета-прогрессия:<br>
+      • Уровень HP: ${meta.hp}<br>
+      • Уровень урона: ${meta.damage}<br><br>
+      ${win?'Станция временно зачищена.':'Станция поглотила ещё одного выжившего.'}
+    </div>
+    <button onclick="location.reload()">Новый забег</button>
+  `;
+  overlay.style.display='flex';
+}
+
+function draw(camX,camY){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  for(let x=0;x<4000;x+=200){
+    for(let y=0;y<4000;y+=200){
+      const gx=x-camX, gy=y-camY;
+      if(gx<-220||gy<-220||gx>canvas.width+220||gy>canvas.height+220) continue;
+      ctx.strokeStyle='rgba(80,120,160,.16)';
+      ctx.strokeRect(gx,gy,200,200);
+      ctx.fillStyle=((x/200|0)^(y/200|0))%7===0?'#1d3046':'#0b1118';
+      ctx.fillRect(gx+5,gy+5,190,190);
+    }
+  }
+
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,0.55)';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.globalCompositeOperation='destination-out';
+  ctx.beginPath();
+  ctx.arc(zone.x-camX,zone.y-camY,zone.r,0,Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.arc(zone.x-camX,zone.y-camY,zone.r,0,Math.PI*2);
+  ctx.strokeStyle='rgba(80,220,255,.5)';
+  ctx.lineWidth=8;
+  ctx.stroke();
+
+  const lootColors={med:'#39d98a',shield:'#4bb7ff',damage:'#ffd166',speed:'#c77dff'};
+  loot.forEach(l=>{
+    ctx.beginPath();
+    ctx.arc(l.x-camX,l.y-camY,l.r,0,Math.PI*2);
+    ctx.fillStyle=lootColors[l.type];
+    ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.35)';
+    ctx.lineWidth=2;
+    ctx.stroke();
+  });
+
+  enemies.forEach(e=>{
+    ctx.beginPath();
+    ctx.arc(e.x-camX,e.y-camY,e.r,0,Math.PI*2);
+    ctx.fillStyle='#ff6f91';
+    ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,0.85)';
+    ctx.fillRect(e.x-camX-14,e.y-camY-e.r-12,28,4);
+    ctx.fillStyle='#ff3355';
+    ctx.fillRect(e.x-camX-14,e.y-camY-e.r-12,28*Math.max(0,e.hp/60),4);
+  });
+
+  bullets.forEach(b=>{
+    ctx.beginPath();
+    ctx.arc(b.x-camX,b.y-camY,b.r,0,Math.PI*2);
+    ctx.fillStyle=b.enemy?'#ff6b6b':'#ffe066';
+    ctx.fill();
+  });
+
+  particles.forEach(p=>{
+    ctx.globalAlpha=Math.min(1,p.life/50);
+    ctx.fillStyle=p.color;
+    ctx.beginPath();
+    ctx.arc(p.x-camX,p.y-camY,2.5,0,Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha=1;
+  });
+
+  ctx.save();
+  ctx.translate(player.x-camX,player.y-camY);
+  ctx.rotate(player.angle);
+  ctx.beginPath();
+  ctx.arc(0,0,player.r,0,Math.PI*2);
+  ctx.fillStyle='#53c6ff';
+  ctx.fill();
+  ctx.fillStyle='#8fe6ff';
+  ctx.fillRect(player.r-2,-5,16,10);
+  ctx.restore();
+
+  hpFill.style.width=(player.hp/player.maxHp*100)+'%';
+  shieldFill.style.width=(player.shield/player.maxShield*100)+'%';
+  stats.textContent=`Враги: ${enemies.length} | Зона: ${Math.floor(zone.r)}м | Кристаллы: ${player.crystals}`;
+}
+
+function loop(){
+  if(!gameOver) update();
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>

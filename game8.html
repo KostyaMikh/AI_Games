@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VITRAZH // Glass Resonance</title>
+<style>
+  html, body {
+    margin: 0;
+    overflow: hidden;
+    background: #050510;
+    font-family: Arial, sans-serif;
+    color: white;
+  }
+
+  canvas {
+    display: block;
+    background:
+      radial-gradient(circle at top, #1a1f44 0%, #080812 70%);
+  }
+
+  #ui {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 10;
+    width: 420px;
+    line-height: 1.4;
+    font-size: 14px;
+    text-shadow: 0 0 5px black;
+  }
+
+  .panel {
+    background: rgba(0,0,0,0.4);
+    border: 2px solid rgba(255,255,255,0.2);
+    padding: 8px;
+    margin-bottom: 8px;
+    backdrop-filter: blur(4px);
+  }
+
+  .title {
+    color: #89f4ff;
+    font-weight: bold;
+  }
+</style>
+<link rel="stylesheet" href="hub-nav.css">
+</head>
+<body>
+<a class="hub-nav" href="index.html">AI-GAMES</a>
+<div id="ui">
+  <div class="panel">
+    <div class="title">VITRAZH // Glass Resonance</div>
+    Управление:<br>
+    A/D — движение<br>
+    W — прыжок<br>
+    ЛКМ — звуковая волна<br>
+    ПКМ — отражение снарядов<br>
+    Shift — телепортация<br>
+    G — смена гравитации<br>
+    E — взлом терминала<br>
+    C — крафт осколка лечения (3 кристалла)<br>
+  </div>
+
+  <div class="panel" id="stats"></div>
+
+  <div class="panel">
+    Цель: победить адаптивного босса.<br>
+    Мир меняется сезонами каждые 30 секунд.
+  </div>
+</div>
+
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+const keys = {};
+let mouse = {x:0, y:0};
+let mouseDown = false;
+let reflectDown = false;
+
+window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+window.addEventListener('mousemove', e => {
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
+});
+window.addEventListener('mousedown', e => {
+  if (e.button === 0) mouseDown = true;
+  if (e.button === 2) reflectDown = true;
+});
+window.addEventListener('mouseup', e => {
+  if (e.button === 0) mouseDown = false;
+  if (e.button === 2) reflectDown = false;
+});
+window.addEventListener('contextmenu', e => e.preventDefault());
+
+const world = {
+  gravity: 0.5,
+  gravityDir: 1,
+  seasonIndex: 0,
+  seasons: ['Весна', 'Лето', 'Осень', 'Зима'],
+  seasonTimer: 0,
+  fragments: [],
+  particles: [],
+  terminals: [],
+  npcs: [],
+  enemies: []
+};
+
+const player = {
+  x: 180,
+  y: 400,
+  vx: 0,
+  vy: 0,
+  w: 40,
+  h: 60,
+  hp: 100,
+  maxHp: 100,
+  onGround: false,
+  facing: 1,
+  cooldown: 0,
+  teleportCooldown: 0,
+  reflectCooldown: 0,
+  inventory: {
+    crystals: 0,
+    medkits: 0
+  }
+};
+
+const boss = {
+  x: 1100,
+  y: 350,
+  vx: 0,
+  vy: 0,
+  w: 100,
+  h: 140,
+  hp: 350,
+  maxHp: 350,
+  cooldown: 0,
+  shield: true,
+  adaptation: {
+    waveResistance: 0
+  },
+  memory: [],
+  phase: 1
+};
+
+for (let i = 0; i < 3; i++) {
+  world.terminals.push({
+    x: 300 + i * 350,
+    y: 450,
+    hacked: false,
+    timer: 0
+  });
+}
+
+function createNPC(name, homeX) {
+  return {
+    name,
+    x: homeX,
+    y: 450,
+    w: 28,
+    h: 48,
+    targetX: homeX,
+    scheduleIndex: 0,
+    schedule: [
+      homeX,
+      homeX + 150,
+      homeX - 120,
+      homeX
+    ],
+    timer: 0
+  };
+}
+
+world.npcs.push(createNPC('Iris', 500));
+world.npcs.push(createNPC('Chime', 850));
+
+function spawnEnemy() {
+  world.enemies.push({
+    x: 1000 + Math.random() * 200,
+    y: 450,
+    w: 36,
+    h: 50,
+    hp: 25,
+    cooldown: Math.random() * 80
+  });
+}
+
+for (let i = 0; i < 4; i++) spawnEnemy();
+
+const projectiles = [];
+
+function clamp(v, a, b) {
+  return Math.max(a, Math.min(b, v));
+}
+
+function rects(a, b) {
+  return (
+    a.x < b.x + b.w &&
+    a.x + a.w > b.x &&
+    a.y < b.y + b.h &&
+    a.y + a.h > b.y
+  );
+}
+
+function damage(entity, amount) {
+  entity.hp -= amount;
+  if (entity.hp < 0) entity.hp = 0;
+}
+
+function createWave(x, y, dx, dy, owner) {
+  projectiles.push({
+    x, y,
+    vx: dx,
+    vy: dy,
+    r: 14,
+    owner,
+    type: 'wave',
+    life: 120,
+    reflected: false
+  });
+}
+
+function createBolt(x, y, dx, dy, owner) {
+  projectiles.push({
+    x, y,
+    vx: dx,
+    vy: dy,
+    r: 8,
+    owner,
+    type: 'bolt',
+    life: 200,
+    reflected: false
+  });
+}
+
+function teleport() {
+  if (player.teleportCooldown > 0) return;
+
+  const dx = mouse.x - player.x;
+  const dy = mouse.y - player.y;
+  const dist = Math.hypot(dx, dy);
+
+  player.x += (dx / dist) * Math.min(220, dist);
+  player.y += (dy / dist) * Math.min(220, dist);
+  player.teleportCooldown = 120;
+
+  for (let i = 0; i < 25; i++) {
+    world.particles.push({
+      x: player.x,
+      y: player.y,
+      vx: (Math.random() - 0.5) * 6,
+      vy: (Math.random() - 0.5) * 6,
+      life: 40,
+      color: '#8ef'
+    });
+  }
+}
+
+function switchGravity() {
+  world.gravityDir *= -1;
+}
+
+function hackTerminal() {
+  for (const t of world.terminals) {
+    const d = Math.hypot(player.x - t.x, player.y - t.y);
+
+    if (d < 80 && !t.hacked) {
+      t.hacked = true;
+      t.timer = 600;
+      boss.shield = false;
+      return;
+    }
+  }
+}
+
+function craft() {
+  if (player.inventory.crystals >= 3) {
+    player.inventory.crystals -= 3;
+    player.inventory.medkits++;
+  }
+}
+
+function useMedkit() {
+  if (player.inventory.medkits > 0 && player.hp < player.maxHp) {
+    player.inventory.medkits--;
+    player.hp = clamp(player.hp + 35, 0, player.maxHp);
+  }
+}
+
+window.addEventListener('keydown', e => {
+  if (e.key.toLowerCase() === 'shift') teleport();
+  if (e.key.toLowerCase() === 'g') switchGravity();
+  if (e.key.toLowerCase() === 'e') hackTerminal();
+  if (e.key.toLowerCase() === 'c') craft();
+  if (e.key.toLowerCase() === 'q') useMedkit();
+});
+
+function updateSeason(dt) {
+  world.seasonTimer += dt;
+
+  if (world.seasonTimer > 1800) {
+    world.seasonTimer = 0;
+    world.seasonIndex = (world.seasonIndex + 1) % world.seasons.length;
+  }
+
+  const season = world.seasons[world.seasonIndex];
+
+  if (season === 'Весна') {
+    world.gravity = 0.45;
+  }
+
+  if (season === 'Лето') {
+    world.gravity = 0.55;
+  }
+
+  if (season === 'Осень') {
+    world.gravity = 0.40;
+  }
+
+  if (season === 'Зима') {
+    world.gravity = 0.25;
+  }
+}
+
+function updateNPCs() {
+  for (const npc of world.npcs) {
+    npc.timer++;
+
+    if (npc.timer > 360) {
+      npc.timer = 0;
+      npc.scheduleIndex = (npc.scheduleIndex + 1) % npc.schedule.length;
+      npc.targetX = npc.schedule[npc.scheduleIndex];
+    }
+
+    const dir = Math.sign(npc.targetX - npc.x);
+    npc.x += dir * 1.2;
+  }
+}
+
+function bossAdaptation() {
+  const wavesUsed = boss.memory.filter(v => v === 'wave').length;
+
+  boss.adaptation.waveResistance = clamp(wavesUsed / 18, 0, 0.8);
+
+  if (boss.memory.length > 40) {
+    boss.memory.shift();
+  }
+}
+
+function updatePlayer() {
+  const speed = world.seasons[world.seasonIndex] === 'Зима' ? 2.5 : 4;
+
+  if (keys['a']) {
+    player.vx = -speed;
+    player.facing = -1;
+  } else if (keys['d']) {
+    player.vx = speed;
+    player.facing = 1;
+  } else {
+    player.vx *= 0.8;
+  }
+
+  if (keys['w'] && player.onGround) {
+    player.vy = -12 * world.gravityDir;
+    player.onGround = false;
+  }
+
+  player.vy += world.gravity * world.gravityDir;
+
+  player.x += player.vx;
+  player.y += player.vy;
+
+  const floorY = world.gravityDir === 1 ? 520 : 20;
+
+  if (world.gravityDir === 1) {
+    if (player.y + player.h > floorY) {
+      player.y = floorY - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    }
+  } else {
+    if (player.y < floorY) {
+      player.y = floorY;
+      player.vy = 0;
+      player.onGround = true;
+    }
+  }
+
+  player.x = clamp(player.x, 0, canvas.width - player.w);
+
+  if (mouseDown && player.cooldown <= 0) {
+    const dx = mouse.x - (player.x + player.w / 2);
+    const dy = mouse.y - (player.y + player.h / 2);
+    const d = Math.hypot(dx, dy);
+
+    createWave(
+      player.x + player.w / 2,
+      player.y + player.h / 2,
+      dx / d * 7,
+      dy / d * 7,
+      'player'
+    );
+
+    boss.memory.push('wave');
+
+    player.cooldown = 20;
+  }
+
+  if (player.cooldown > 0) player.cooldown--;
+  if (player.teleportCooldown > 0) player.teleportCooldown--;
+}
+
+function updateBoss() {
+  if (boss.hp <= 0) return;
+
+  const dx = player.x - boss.x;
+  boss.vx = Math.sign(dx) * 1.5;
+  boss.x += boss.vx;
+
+  boss.cooldown--;
+
+  if (boss.cooldown <= 0) {
+    const px = player.x - boss.x;
+    const py = player.y - boss.y;
+    const d = Math.hypot(px, py);
+
+    createBolt(
+      boss.x + boss.w / 2,
+      boss.y + boss.h / 2,
+      px / d * 5,
+      py / d * 5,
+      'boss'
+    );
+
+    boss.cooldown = 55;
+  }
+
+  if (boss.hp < 180) boss.phase = 2;
+  if (boss.phase === 2 && Math.random() < 0.01) spawnEnemy();
+
+  let hacked = world.terminals.some(t => t.hacked);
+  if (!hacked) boss.shield = true;
+
+  bossAdaptation();
+}
+
+function updateEnemies() {
+  for (const e of world.enemies) {
+    if (e.hp <= 0) continue;
+
+    e.cooldown--;
+
+    const dir = Math.sign(player.x - e.x);
+    e.x += dir * 1.2;
+
+    if (e.cooldown <= 0) {
+      createBolt(e.x, e.y, dir * 4, 0, 'enemy');
+      e.cooldown = 120;
+    }
+
+    if (rects(player, e)) {
+      damage(player, 0.1);
+    }
+  }
+
+  world.enemies = world.enemies.filter(e => e.hp > 0);
+}
+
+function updateProjectiles() {
+  for (const p of projectiles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life--;
+
+    if (reflectDown) {
+      const d = Math.hypot(player.x + player.w/2 - p.x, player.y + player.h/2 - p.y);
+
+      if (d < 80 && p.owner !== 'player') {
+        p.vx *= -1.1;
+        p.vy *= -1.1;
+        p.owner = 'player';
+        p.reflected = true;
+      }
+    }
+
+    if (p.owner === 'player') {
+      if (rects({x:p.x-p.r,y:p.y-p.r,w:p.r*2,h:p.r*2}, boss)) {
+        let dmg = p.type === 'wave' ? 12 : 6;
+
+        dmg *= (1 - boss.adaptation.waveResistance);
+
+        if (boss.shield) dmg *= 0.2;
+
+        damage(boss, dmg);
+        p.life = 0;
+      }
+
+      for (const e of world.enemies) {
+        if (rects({x:p.x-p.r,y:p.y-p.r,w:p.r*2,h:p.r*2}, e)) {
+          damage(e, 15);
+          p.life = 0;
+        }
+      }
+    }
+
+    if (p.owner === 'boss' || p.owner === 'enemy') {
+      if (rects({x:p.x-p.r,y:p.y-p.r,w:p.r*2,h:p.r*2}, player)) {
+        damage(player, 10);
+        p.life = 0;
+      }
+
+      // Дружественный огонь
+      for (const e of world.enemies) {
+        if (p.owner === 'boss') {
+          if (rects({x:p.x-p.r,y:p.y-p.r,w:p.r*2,h:p.r*2}, e)) {
+            damage(e, 10);
+            p.life = 0;
+          }
+        }
+      }
+
+      if (p.owner === 'enemy') {
+        if (rects({x:p.x-p.r,y:p.y-p.r,w:p.r*2,h:p.r*2}, boss)) {
+          damage(boss, 4);
+          p.life = 0;
+        }
+      }
+    }
+  }
+
+  for (const t of world.terminals) {
+    if (t.hacked) {
+      t.timer--;
+      if (t.timer <= 0) {
+        t.hacked = false;
+      }
+    }
+  }
+
+  for (const e of world.enemies) {
+    if (e.hp <= 0) {
+      world.fragments.push({
+        x: e.x,
+        y: e.y,
+        r: 8
+      });
+    }
+  }
+
+  projectiles.splice(0, projectiles.length, ...projectiles.filter(p => p.life > 0));
+}
+
+function collectFragments() {
+  for (const f of world.fragments) {
+    const d = Math.hypot(player.x - f.x, player.y - f.y);
+    if (d < 40) {
+      player.inventory.crystals++;
+      f.dead = true;
+    }
+  }
+
+  world.fragments = world.fragments.filter(f => !f.dead);
+}
+
+function drawGlassPolygon(x, y, w, h, c1, c2) {
+  ctx.save();
+
+  ctx.beginPath();
+  ctx.moveTo(x, y + h * 0.15);
+  ctx.lineTo(x + w * 0.35, y);
+  ctx.lineTo(x + w, y + h * 0.18);
+  ctx.lineTo(x + w * 0.82, y + h);
+  ctx.lineTo(x + w * 0.18, y + h * 0.82);
+  ctx.closePath();
+
+  const grad = ctx.createLinearGradient(x, y, x + w, y + h);
+  grad.addColorStop(0, c1);
+  grad.addColorStop(0.5, 'rgba(255,255,255,0.25)');
+  grad.addColorStop(1, c2);
+
+  ctx.shadowBlur = 25;
+  ctx.shadowColor = c1;
+
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(x + w * 0.15, y + h * 0.25);
+  ctx.lineTo(x + w * 0.7, y + h * 0.85);
+  ctx.moveTo(x + w * 0.45, y + h * 0.1);
+  ctx.lineTo(x + w * 0.25, y + h * 0.7);
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawBackground() {
+  const season = world.seasons[world.seasonIndex];
+
+  let topColor = '#101830';
+  let bottomColor = '#050510';
+  let glow = 'rgba(100,200,255,0.08)';
+
+  if (season === 'Весна') {
+    topColor = '#102a24';
+    bottomColor = '#071110';
+    glow = 'rgba(80,255,180,0.12)';
+  }
+
+  if (season === 'Лето') {
+    topColor = '#302010';
+    bottomColor = '#120807';
+    glow = 'rgba(255,180,60,0.12)';
+  }
+
+  if (season === 'Осень') {
+    topColor = '#2a1410';
+    bottomColor = '#100707';
+    glow = 'rgba(255,90,40,0.12)';
+  }
+
+  if (season === 'Зима') {
+    topColor = '#101c30';
+    bottomColor = '#050812';
+    glow = 'rgba(120,180,255,0.14)';
+  }
+
+  const bg = ctx.createLinearGradient(0,0,0,canvas.height);
+  bg.addColorStop(0, topColor);
+  bg.addColorStop(1, bottomColor);
+
+  ctx.fillStyle = bg;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  for (let i = 0; i < 25; i++) {
+    const px = (i * 140 + performance.now() * 0.01) % (canvas.width + 200);
+    const py = Math.sin(i + performance.now() * 0.001) * 120 + canvas.height * 0.4;
+
+    ctx.beginPath();
+    ctx.arc(px, py, 120, 0, Math.PI * 2);
+    ctx.fillStyle = glow;
+    ctx.fill();
+  }
+
+  for (let i = 0; i < 16; i++) {
+    drawGlassPolygon(i * 120, 0, 110, canvas.height,
+      'rgba(255,255,255,0.04)',
+      'rgba(0,0,0,0.02)');
+  }
+
+  ctx.strokeStyle = 'rgba(120,220,255,0.08)';
+
+  for (let x = 0; x < canvas.width; x += 60) {
+    ctx.beginPath();
+    ctx.moveTo(x,0);
+    ctx.lineTo(x + 80, canvas.height);
+    ctx.stroke();
+  }
+
+  for (let y = 0; y < canvas.height; y += 60) {
+    ctx.beginPath();
+    ctx.moveTo(0,y);
+    ctx.lineTo(canvas.width, y + 50);
+    ctx.stroke();
+  }
+}
+
+function drawEntities() {
+  drawGlassPolygon(player.x, player.y, player.w, player.h, '#66f0ff', '#173d88');
+
+  ctx.save();
+  ctx.shadowBlur = 30;
+  ctx.shadowColor = '#66eeff';
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+  ctx.strokeRect(player.x + 6, player.y + 8, player.w - 12, player.h - 16);
+  ctx.restore();
+
+  if (boss.hp > 0) {
+    drawGlassPolygon(boss.x, boss.y, boss.w, boss.h,
+      boss.shield ? '#ff66ff' : '#ff4455', '#3a0015');
+
+    ctx.save();
+    ctx.shadowBlur = 45;
+    ctx.shadowColor = boss.shield ? '#ff66ff' : '#ff3344';
+    ctx.beginPath();
+    ctx.arc(boss.x + boss.w/2, boss.y + boss.h/2, 60 + Math.sin(performance.now()*0.005)*8, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  for (const e of world.enemies) {
+    drawGlassPolygon(e.x, e.y, e.w, e.h, '#fd5', '#520');
+  }
+
+  for (const t of world.terminals) {
+    drawGlassPolygon(t.x, t.y, 40, 70,
+      t.hacked ? '#0f0' : '#888', '#111');
+  }
+
+  for (const npc of world.npcs) {
+    drawGlassPolygon(npc.x, npc.y, npc.w, npc.h, '#fff', '#49a');
+
+    ctx.fillStyle = 'white';
+    ctx.fillText(npc.name, npc.x - 10, npc.y - 10);
+  }
+
+  for (const f of world.fragments) {
+    drawGlassPolygon(f.x, f.y, 14, 14, '#0ff', '#0aa');
+  }
+}
+
+function drawProjectiles() {
+  for (const p of projectiles) {
+    ctx.save();
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+
+    if (p.type === 'wave') {
+      const pulse = Math.sin(performance.now() * 0.01 + p.x * 0.01) * 6;
+      ctx.shadowBlur = 35 + pulse;
+      ctx.shadowColor = p.reflected ? '#ffffff' : '#66eeff';
+      ctx.fillStyle = p.reflected ? '#ffffff' : '#66ddff';
+    } else {
+      ctx.shadowBlur = 24;
+      ctx.shadowColor = p.owner === 'boss' ? '#ff4466' : '#ffbb55';
+      ctx.fillStyle = p.owner === 'boss' ? '#ff5577' : '#ffbb55';
+    }
+
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r + 6, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
+function drawUI() {
+  document.getElementById('stats').innerHTML = `
+  HP: ${Math.round(player.hp)} / ${player.maxHp}<br>
+  БОСС: ${Math.round(boss.hp)} / ${boss.maxHp}<br>
+  Сезон: ${world.seasons[world.seasonIndex]}<br>
+  Сопротивление босса к звуковым волнам: ${Math.round(boss.adaptation.waveResistance * 100)}%<br>
+  Кристаллы: ${player.inventory.crystals}<br>
+  Аптечки: ${player.inventory.medkits}<br>
+  Гравитация: ${world.gravityDir === 1 ? 'Нормальная' : 'Инверсия'}
+  `;
+
+  if (boss.hp <= 0) {
+    ctx.fillStyle = 'white';
+    ctx.font = '64px Arial';
+    ctx.fillText('ПОБЕДА', canvas.width/2 - 160, canvas.height/2);
+  }
+
+  if (player.hp <= 0) {
+    ctx.fillStyle = 'red';
+    ctx.font = '64px Arial';
+    ctx.fillText('ПОРАЖЕНИЕ', canvas.width/2 - 220, canvas.height/2);
+  }
+}
+
+function gameLoop() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  drawBackground();
+
+  if (player.hp > 0 && boss.hp > 0) {
+    updateSeason(1);
+    updatePlayer();
+    updateBoss();
+    updateEnemies();
+    updateProjectiles();
+    updateNPCs();
+    collectFragments();
+  }
+
+  drawEntities();
+  drawProjectiles();
+  drawUI();
+
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+</body>
+</html>

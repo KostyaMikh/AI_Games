@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Акварельный Кликер: Тайный Сад</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Comfortaa:wght@500&display=swap');
+
+        :root {
+            /* Палитра дня */
+            --bg-day: #f9f6f0;
+            --paper-day: rgba(255, 255, 255, 0.85);
+            --text-day: #4a3b32;
+            --accent-day: #e8a7a1;
+            
+            /* Палитра ночи */
+            --bg-night: #2b3a4a;
+            --paper-night: rgba(43, 58, 74, 0.85);
+            --text-night: #e2e8f0;
+            --accent-night: #7c98b3;
+
+            /* Текущие переменные (меняются скриптом) */
+            --bg: var(--bg-day);
+            --paper: var(--paper-day);
+            --text: var(--text-day);
+            --accent: var(--accent-day);
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Comfortaa', cursive;
+            background-color: var(--bg);
+            color: var(--text);
+            transition: background-color 3s ease, color 3s ease;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+            background-image: radial-gradient(circle at 30% 20%, rgba(243,211,202,0.4) 0%, transparent 50%),
+                              radial-gradient(circle at 80% 70%, rgba(198,222,234,0.4) 0%, transparent 50%);
+        }
+
+        /* Акварельная текстура бумаги */
+        body::before {
+            content: "";
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            opacity: 0.04;
+            pointer-events: none;
+            z-index: 999;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        }
+
+        .game-container {
+            width: 90%;
+            max-width: 600px;
+            background: var(--paper);
+            padding: 30px;
+            border-radius: 40px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.05), inset 0 0 20px rgba(255,255,255,0.6);
+            backdrop-filter: blur(10px);
+            border: 3px solid rgba(255, 255, 255, 0.5);
+            text-align: center;
+            transition: background 3s ease, border-color 3s ease;
+            position: relative;
+        }
+
+        h1 {
+            font-family: 'Caveat', cursive;
+            font-size: 3rem;
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: var(--text);
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .stats-panel {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+            font-size: 0.9rem;
+            background: rgba(255,255,255,0.3);
+            padding: 10px;
+            border-radius: 20px;
+        }
+
+        .stat-box span {
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+
+        /* Игровое поле и кликабельная зона */
+        .click-area {
+            position: relative;
+            height: 320px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 30px;
+            margin: 20px 0;
+            overflow: hidden;
+            border: 2px dashed rgba(0,0,0,0.05);
+            cursor: crosshair;
+        }
+
+        /* Акварельные пятна-мишени */
+        .target {
+            position: absolute;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: opacity 0.5s ease, transform 0.2s;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-shadow: inset 0 0 15px rgba(255,255,255,0.5);
+            filter: blur(1px);
+        }
+
+        .target::after {
+            content: '';
+            position: absolute;
+            width: 80%;
+            height: 80%;
+            border-radius: 50%;
+            border: 2px dashed rgba(255,255,255,0.4);
+        }
+
+        /* Стили для разных типов пятен */
+        .target.flower {
+            background: radial-gradient(circle, #fbc531 0%, #ff7f50 70%, transparent 100%);
+        }
+        .target.weed {
+            background: radial-gradient(circle, #4cd137 0%, #1b1464 80%, transparent 100%);
+        }
+
+        /* Механика: Маскировка (размытие и прозрачность) */
+        .target.masked {
+            opacity: 0.15 !important;
+            filter: blur(12px) !important;
+        }
+
+        /* Механика: Урон по площади (визуальный круг всплеска) */
+        .splash-ring {
+            position: absolute;
+            border: 4px solid var(--accent);
+            border-radius: 50%;
+            pointer-events: none;
+            animation: splash-expand 0.4s ease-out forwards;
+            opacity: 0.6;
+            filter: blur(2px);
+        }
+
+        @keyframes splash-expand {
+            0% { width: 0; height: 0; transform: translate(-50%, -50%); opacity: 0.8; }
+            100% { width: 160px; height: 160px; transform: translate(-50%, -50%); opacity: 0; }
+        }
+
+        /* Кнопки управления */
+        .controls {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+        }
+
+        .btn {
+            font-family: 'Comfortaa', cursive;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 20px;
+            background: var(--accent);
+            color: white;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.3s;
+            box-shadow: 0 8px 15px rgba(0,0,0,0.05);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Индикатор Дня/Ночи */
+        .cycle-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            border-radius: 15px;
+            font-size: 0.85rem;
+            font-weight: bold;
+            margin-bottom: 15px;
+            background: var(--accent);
+            color: white;
+            transition: background 1s;
+        }
+
+        /* Экраны победы/поражения */
+        .screen {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: var(--paper);
+            border-radius: 40px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            display: none;
+        }
+
+        .screen h2 {
+            font-family: 'Caveat', cursive;
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }
+
+        /* Всплывающие очки текста */
+        .floating-text {
+            position: absolute;
+            font-family: 'Caveat', cursive;
+            font-size: 1.5rem;
+            font-weight: bold;
+            pointer-events: none;
+            animation: floatUp 0.8s ease-out forwards;
+        }
+
+        @keyframes floatUp {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            100% { transform: translateY(-40px) scale(1.2); opacity: 0; }
+        }
+    </style>
+    <link rel="stylesheet" href="hub-nav.css">
+</head>
+<body>
+    <a class="hub-nav" href="index.html">AI-GAMES</a>
+
+    <div class="game-container">
+        <!-- Экран победы -->
+        <div id="win-screen" class="screen">
+            <h2 style="color: #4cd137;">Сад Расцвел!</h2>
+            <p>Вы очистили холст от сорняков.</p>
+            <button class="btn" onclick="resetGame()">Начать заново</button>
+        </div>
+
+        <!-- Экран поражения -->
+        <div id="lose-screen" class="screen">
+            <h2 style="color: #e8a7a1;">Холст Зарос...</h2>
+            <p>Сорняки поглотили все чистые краски.</p>
+            <button class="btn" onclick="resetGame()">Попробовать снова</button>
+        </div>
+
+        <h1>Тайный Сад</h1>
+        
+        <div id="cycle-indicator" class="cycle-badge">Утро наступает...</div>
+
+        <div class="stats-panel">
+            <div class="stat-box">Краска: <span id="score-val">0</span>/100</div>
+            <div class="stat-box">Сорняки: <span id="weed-val">0</span>/15</div>
+            <div class="stat-box">Сила AOE: <span id="aoe-level">1</span></div>
+        </div>
+
+        <!-- Игровая зона кликов -->
+        <div class="click-area" id="stage"></div>
+
+        <div class="controls">
+            <button class="btn" id="upgrade-aoe" onclick="buyAoe()">Разлить воду (AOE) (Цена: 25)</button>
+        </div>
+    </div>
+
+    <script>
+        // Состояние игры
+        let score = 0;
+        let weedCount = 0;
+        let aoeRadius = 40; // Начальный радиус урона по площади
+        let aoeLevel = 1;
+        let isNight = false;
+        let gameActive = true;
+        
+        const maxWeeds = 15;
+        const winScore = 100;
+
+        const stage = document.getElementById('stage');
+        const scoreVal = document.getElementById('score-val');
+        const weedVal = document.getElementById('weed-val');
+        const aoeLevelVal = document.getElementById('aoe-level');
+        const cycleIndicator = document.getElementById('cycle-indicator');
+        const upgradeBtn = document.getElementById('upgrade-aoe');
+
+        // Инициализация
+        function init() {
+            // Спавн начальных объектов
+            for(let i=0; i<3; i++) spawnTarget('flower');
+            for(let i=0; i<2; i++) spawnTarget('weed');
+            
+            // Игровые циклы
+            setInterval(gameTick, 2000); // Спавн сорняков
+            setInterval(toggleDayNight, 12000); // Механика: Цикл день/ночь каждые 12 секунд
+            setInterval(updateMasking, 1500); // Механика: Маскировка обновляется динамически
+            
+            updateUI();
+        }
+
+        // Спавн акварельных пятен
+        function spawnTarget(type) {
+            if (!gameActive) return;
+
+            const target = document.createElement('div');
+            target.classList.add('target', type);
+            
+            // Случайный акварельный размер
+            const size = type === 'flower' ? Math.random() * 30 + 40 : Math.random() * 30 + 50;
+            target.style.width = `${size}px`;
+            target.style.height = `${size}px`;
+
+            // Позиционирование внутри холста
+            const posX = Math.random() * (stage.clientWidth - size);
+            const posY = Math.random() * (stage.clientHeight - size);
+            target.style.left = `${posX}px`;
+            target.style.top = `${posY}px`;
+
+            // Уникальный индентификатор здоровья сорняка
+            if (type === 'weed') {
+                target.dataset.hp = 2;
+                weedCount++;
+                if (weedCount >= maxWeeds) endGame(false);
+            }
+
+            // Клик по конкретной цели
+            target.addEventListener('mousedown', (e) => {
+                e.stopPropagation(); // Чтобы не срабатывал клик по пустому полю
+                handleInteraction(e.clientX, e.clientY, target);
+            });
+
+            stage.appendChild(target);
+            updateUI();
+        }
+
+        // Клик по пустому месту поля (промах или использование AOE)
+        stage.addEventListener('mousedown', (e) => {
+            if (!gameActive) return;
+            handleInteraction(e.clientX, e.clientY, null);
+        });
+
+        // Главная функция обработки клика и Механики Урона по площади (AOE)
+        function handleInteraction(clientX, clientY, directTarget) {
+            const rect = stage.getBoundingClientRect();
+            const clickX = clientX - rect.left;
+            const clickY = clientY - rect.top;
+
+            // Визуальный эффект всплеска акварели (AOE)
+            createSplash(clickX, clickY);
+
+            // Ищем все элементы, попавшие под урон по площади
+            const targets = document.querySelectorAll('.target');
+            
+            targets.forEach(tgt => {
+                const tgtRect = tgt.getBoundingClientRect();
+                const tgtX = (tgtRect.left + tgtRect.width / 2) - rect.left;
+                const tgtY = (tgtRect.top + tgtRect.height / 2) - rect.top;
+
+                // Расстояние от клика до центра пятна
+                const distance = Math.hypot(clickX - tgtX, clickY - tgtY);
+
+                // Если цель является прямой или попала в радиус AOE
+                if (tgt === directTarget || distance <= aoeRadius) {
+                    
+                    // ЭФФЕКТ МАСКИРОВКИ: Если объект замаскирован, урон/клик по нему не проходит!
+                    if (tgt.classList.contains('masked')) {
+                        createFloatingText(tgtX, tgtY, 'Мимо!', '#95a5a6');
+                        return; 
+                    }
+
+                    if (tgt.classList.contains('flower')) {
+                        // Клик по цветку дает очки чистой краски
+                        // В ночное время цветы дают в два раза меньше очков (влияние цикла)
+                        let points = isNight ? 1 : 2;
+                        score += points;
+                        createFloatingText(tgtX, tgtY, `+${points}`, '#ff7f50');
+                        tgt.remove();
+                        spawnTarget('flower');
+                    } 
+                    else if (tgt.classList.contains('weed')) {
+                        // Клик по сорняку уменьшает его здоровье
+                        let hp = parseInt(tgt.dataset.hp) - 1;
+                        tgt.dataset.hp = hp;
+
+                        if (hp <= 0) {
+                            tgt.remove();
+                            weedCount--;
+                            score += 5; // Награда за уничтожение
+                            createFloatingText(tgtX, tgtY, '+5 Сорняк убран!', '#4cd137');
+                            // Шанс вырастить новый цветок при уничтожении сорняка
+                            if(Math.random() > 0.5) spawnTarget('flower');
+                        } else {
+                            tgt.style.transform = 'scale(0.8)';
+                            createFloatingText(tgtX, tgtY, 'Хит!', '#1b1464');
+                        }
+                    }
+                }
+            });
+
+            // Проверка условий победы
+            if (score >= winScore) endGame(true);
+            updateUI();
+        }
+
+        // Создание визуального всплеска
+        function createSplash(x, y) {
+            const ring = document.createElement('div');
+            ring.classList.add('splash-ring');
+            ring.style.left = `${x}px`;
+            ring.style.top = `${y}px`;
+            // Масштабируем визуальный круг под реальный радиус AOE
+            ring.style.transform = `translate(-50%, -50%)`;
+            stage.appendChild(ring);
+            setTimeout(() => ring.remove(), 400);
+        }
+
+        // Создание всплывающего текста очков
+        function createFloatingText(x, y, text, color) {
+            const txt = document.createElement('div');
+            txt.classList.add('floating-text');
+            txt.innerText = text;
+            txt.style.left = `${x}px`;
+            txt.style.top = `${y}px`;
+            txt.style.color = color;
+            stage.appendChild(txt);
+            setTimeout(() => txt.remove(), 800);
+        }
+
+        // МЕХАНИКА: Маскировка
+        // Сорняки и цветы могут случайным образом "сливаться с холстом" (размываться)
+        // В ночное время шанс маскировки сорняков значительно выше.
+        function updateMasking() {
+            if (!gameActive) return;
+            const targets = document.querySelectorAll('.target');
+            targets.forEach(tgt => {
+                const maskChance = tgt.classList.contains('weed') && isNight ? 0.6 : 0.25;
+                if (Math.random() < maskChance) {
+                    tgt.classList.add('masked');
+                } else {
+                    tgt.classList.remove('masked');
+                }
+            });
+        }
+
+        // МЕХАНИКА: Цикл День / Ночь
+        // Меняет визуал игры и влияет на скорость роста вредных сорняков.
+        function toggleDayNight() {
+            if (!gameActive) return;
+            isNight = !isNight;
+            const root = document.documentElement;
+
+            if (isNight) {
+                root.style.setProperty('--bg', 'var(--bg-night)');
+                root.style.setProperty('--paper', 'var(--paper-night)');
+                root.style.setProperty('--text', 'var(--text-night)');
+                root.style.setProperty('--accent', 'var(--accent-night)');
+                cycleIndicator.innerText = "Ночь опустилась (Сорняки маскируются лучше!)";
+                cycleIndicator.style.background = "#34495e";
+            } else {
+                root.style.setProperty('--bg', 'var(--bg-day)');
+                root.style.setProperty('--paper', 'var(--paper-day)');
+                root.style.setProperty('--text', 'var(--text-day)');
+                root.style.setProperty('--accent', 'var(--accent-day)');
+                cycleIndicator.innerText = "Солнечный день (Цветы дают больше красок)";
+                cycleIndicator.style.background = "#e8a7a1";
+            }
+        }
+
+        // Периодическое размножение сорняков (Влияние цикла: Ночью растут быстрее)
+        function gameTick() {
+            if (!gameActive) return;
+            const spawnChance = isNight ? 0.8 : 0.4;
+            if (Math.random() < spawnChance) {
+                spawnTarget('weed');
+            }
+        }
+
+        // Прокачка Урона по площади (AOE) за счет очков краски
+        function buyAoe() {
+            if (score >= 25) {
+                score -= 25;
+                aoeRadius += 25; // Увеличиваем радиус поражения splash-а
+                aoeLevel += 1;
+                updateUI();
+                
+                // Динамическое изменение CSS для отображения обновленного радиуса
+                const styleSheet = document.styleSheets[0];
+                const keyframes = `@keyframes splash-expand {
+                    0% { width: 0; height: 0; transform: translate(-50%, -50%); opacity: 0.8; }
+                    100% { width: ${aoeRadius * 2}px; height: ${aoeRadius * 2}px; transform: translate(-50%, -50%); opacity: 0; }
+                }`;
+                // Перезаписываем анимацию под новый радиус
+                for(let i=0; i<styleSheet.cssRules.length; i++) {
+                    if(styleSheet.cssRules[i].name === "splash-expand") {
+                        styleSheet.deleteRule(i);
+                        break;
+                    }
+                }
+                styleSheet.insertRule(keyframes, styleSheet.cssRules.length);
+            }
+        }
+
+        // Обновление интерфейса
+        function updateUI() {
+            scoreVal.innerText = score;
+            weedVal.innerText = weedCount;
+            aoeLevelVal.innerText = aoeLevel;
+            upgradeBtn.disabled = score < 25;
+        }
+
+        // Завершение игры (Победа / Поражение)
+        function endGame(isWin) {
+            gameActive = false;
+            if (isWin) {
+                document.getElementById('win-screen').style.display = 'flex';
+            } else {
+                document.getElementById('lose-screen').style.display = 'flex';
+            }
+        }
+
+        // Сброс и перезапуск
+        function resetGame() {
+            stage.innerHTML = '';
+            score = 0;
+            weedCount = 0;
+            aoeRadius = 40;
+            aoeLevel = 1;
+            isNight = false;
+            gameActive = true;
+            
+            document.getElementById('win-screen').style.display = 'none';
+            document.getElementById('lose-screen').style.display = 'none';
+            
+            // Сброс цветов темы к дневным
+            const root = document.documentElement;
+            root.style.setProperty('--bg', 'var(--bg-day)');
+            root.style.setProperty('--paper', 'var(--paper-day)');
+            root.style.setProperty('--text', 'var(--text-day)');
+            root.style.setProperty('--accent', 'var(--accent-day)');
+            cycleIndicator.innerText = "Утро наступает...";
+            cycleIndicator.style.background = "#e8a7a1";
+
+            init();
+        }
+
+        // Старт игры при загрузке
+        window.onload = init;
+    </script>
+</body>
+</html>

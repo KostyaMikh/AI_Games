@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>ПРИЗРАК ПУСТОШИ: ВРЕМЕННАЯ ПЕТЛЯ</title>
+    <style>
+        body {
+            background-color: #120c08;
+            color: #d4a373;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+            user-select: none;
+        }
+        h1 {
+            color: #ff5500;
+            text-shadow: 0 0 10px #ff5500;
+            margin-bottom: 5px;
+        }
+        #game-container {
+            display: flex;
+            gap: 20px;
+            background: #1c140e;
+            padding: 15px;
+            border: 3px double #ff5500;
+            box-shadow: 0 0 20px rgba(255, 85, 0, 0.2);
+        }
+        canvas {
+            border: 2px solid #d4a373;
+            background: #261c14;
+        }
+        #sidebar {
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .panel {
+            border: 1px solid #d4a373;
+            padding: 10px;
+            background: #261c14;
+            margin-bottom: 10px;
+        }
+        .panel h3 {
+            margin-top: 0;
+            color: #ffaa00;
+            border-bottom: 1px dashed #d4a373;
+            padding-bottom: 5px;
+        }
+        .btn {
+            background: #4a1204;
+            color: #fff;
+            border: 1px solid #ff5500;
+            padding: 10px;
+            cursor: pointer;
+            font-weight: bold;
+            font-family: inherit;
+            width: 100%;
+            margin-top: 5px;
+            transition: all 0.2s;
+        }
+        .btn:hover:not(:disabled) {
+            background: #ff5500;
+            color: #000;
+            box-shadow: 0 0 10px #ff5500;
+        }
+        .btn:disabled {
+            background: #222;
+            border-color: #444;
+            color: #666;
+            cursor: not-allowed;
+        }
+        #bonus-screen {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #1c140e;
+            border: 4px solid #ffaa00;
+            padding: 20px;
+            z-index: 100;
+            width: 400px;
+            box-shadow: 0 0 30px #000;
+        }
+        #log {
+            height: 120px;
+            overflow-y: auto;
+            font-size: 12px;
+            background: #120c08;
+            padding: 5px;
+            border: 1px solid #4a1204;
+            color: #a88158;
+        }
+        .stat-line {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
+        .highlight { color: #ffaa00; font-weight: bold; }
+        .danger { color: #ff3333; font-weight: bold; }
+        .loop { color: #33ccff; font-weight: bold; }
+    </style>
+    <link rel="stylesheet" href="hub-nav.css">
+</head>
+<body>
+    <a class="hub-nav" href="index.html">AI-GAMES</a>
+
+    <h1>ПРИЗРАК ПУСТОШИ: ВРЕМЕННАЯ ПЕТЛЯ</h1>
+    <div style="margin-bottom: 15px; color: #a88158; text-align: center; max-width: 900px;">
+        Вы управляете броневиком в радиоактивной Пустоши. Ваша цель — проехать <strong>20 км</strong> до Цитадели. 
+        Если вы погибнете, <strong>Петля Времени</strong> вернет вас в начало пути, но вы сохраните все улучшения от выбора бонусов!
+    </div>
+
+    <div id="game-container">
+        <!-- Игровое поле -->
+        <canvas id="gameCanvas" width="600" height="500"></canvas>
+
+        <!-- Боковая панель -->
+        <div id="sidebar">
+            <div>
+                <div class="panel">
+                    <h3>БРОНЕВИК (ТРАНСПОРТ)</h3>
+                    <div class="stat-line"><span>Прочность:</span> <span id="ui-hp" class="highlight">100/100</span></div>
+                    <div class="stat-line"><span>Топливо:</span> <span id="ui-fuel" class="highlight">40/40</span></div>
+                    <div class="stat-line"><span>Урон турели:</span> <span id="ui-atk" class="highlight">25</span></div>
+                    <div class="stat-line"><span>Скорость хода:</span> <span id="ui-speed" class="highlight">1 км/ход</span></div>
+                </div>
+
+                <div class="panel">
+                    <h3>СТАТУС МИССИИ</h3>
+                    <div class="stat-line"><span>Дистанция:</span> <span id="ui-dist" class="highlight">0 / 20 км</span></div>
+                    <div class="stat-line"><span>Номер петли:</span> <span id="ui-loop" class="loop">1</span></div>
+                    <div class="stat-line"><span>Режим:</span> <span id="ui-phase" style="color:#00ff00;">Ваш Ход</span></div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>УПРАВЛЕНИЕ ХОДОМ</h3>
+                <button id="btn-move" class="btn">ВХОД: ЕХАТЬ ВПЕРЕД (-1 Топливо)</button>
+                <button id="btn-scavenge" class="btn">ВХОД: ИСКАТЬ ТОПЛИВО</button>
+                <div id="log"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Экран выбора бонусов -->
+    <div id="bonus-screen">
+        <h2 style="color:#ffaa00; margin-top:0; text-align:center;">ВЫБОР БОНУСА ПЕТЛИ</h2>
+        <p style="font-size:14px; text-align:center;">Временная петля замыкается! Выберите хроно-модификатор, который перейдет с вами в следующий цикл:</p>
+        <div id="bonus-options"></div>
+    </div>
+
+    <script>
+        // --- НАСТРОЙКИ И СОСТОЯНИЕ ИГРЫ ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Глобальное состояние (сохраняется между петлями времени)
+        const MetaProgression = {
+            loopCount: 1,
+            bonusHpMax: 100,
+            bonusFuelMax: 40,
+            bonusAtk: 25,
+            bonusSpeed: 1
+        };
+
+        // Состояние текущего заезда внутри петли
+        let Game = {};
+
+        // Типы объектов на карте
+        const TYPES = {
+            EMPTY: 0,
+            REIDER: 1,
+            ANOMALY: 2,
+            BARREL: 3
+        };
+
+        // --- ГЕНЕРАЦИЯ ГРАФИКИ (ПРОЦЕДУРНАЯ) ---
+        // Так как внешних картинок нет, рисуем постапокалиптический мир кодом
+        function drawBackground() {
+            // Земля - выжженная пустыня
+            ctx.fillStyle = '#261c14';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Сетки/трещины земли
+            ctx.strokeStyle = '#3a2b1f';
+            ctx.lineWidth = 1;
+            for(let i = 0; i < canvas.width; i += 40) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + (Math.sin(i)*10), canvas.height); ctx.stroke();
+            }
+            for(let j = 0; j < canvas.height; j += 40) {
+                ctx.beginPath(); ctx.moveTo(0, j); ctx.lineTo(canvas.width, j + (Math.cos(j)*10)); ctx.stroke();
+            }
+
+            // Дорожная колея
+            ctx.fillStyle = '#1c140e';
+            ctx.fillRect(0, 200, canvas.width, 100);
+            ctx.strokeStyle = '#4a3319';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(0, 200, canvas.width, 100);
+        }
+
+        function drawTruck(x, y) {
+            ctx.save();
+            ctx.translate(x, y);
+
+            // Корпус броневика (грязный металлический/ржавый)
+            ctx.fillStyle = '#5c5346';
+            ctx.fillRect(-35, -15, 70, 30);
+            ctx.strokeStyle = '#2b251e';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(-35, -15, 70, 30);
+
+            // Кабина (завешенная решетками)
+            ctx.fillStyle = '#3a352d';
+            ctx.fillRect(20, -12, 15, 24);
+            ctx.fillStyle = '#ff5500'; // Свет фар
+            ctx.fillRect(35, -10, 3, 5);
+            ctx.fillRect(35, 5, 3, 5);
+
+            // Колеса (шипованные, постапокалиптичные)
+            ctx.fillStyle = '#120c08';
+            const wheels = [-25, -5, 15];
+            wheels.forEach(wx => {
+                ctx.fillRect(wx, -20, 10, 6);
+                ctx.fillRect(wx, 14, 10, 6);
+            });
+
+            // Боевая турель сверху
+            ctx.fillStyle = '#1c140e';
+            ctx.beginPath();
+            ctx.arc(-5, 0, 12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Ствол пушки
+            ctx.strokeStyle = '#ff5500';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(-5, 0);
+            ctx.lineTo(15, 0);
+            ctx.stroke();
+
+            // Эффект выхлопа (анимация дыма через случайные круги)
+            if (Math.random() > 0.3) {
+                ctx.fillStyle = 'rgba(100, 80, 70, 0.5)';
+                ctx.beginPath();
+                ctx.arc(-45, -5 - Math.random()*5, 5 + Math.random()*5, 0, Math.PI*2);
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+
+        function drawEntities() {
+            Game.entities.forEach(ent => {
+                if (ent.destroyed) return;
+                
+                ctx.save();
+                ctx.translate(ent.screenX, ent.screenY);
+
+                if (ent.type === TYPES.REIDER) {
+                    // Машина рейдеров (багги с шипами)
+                    ctx.fillStyle = '#7a2214';
+                    ctx.fillRect(-20, -12, 40, 24);
+                    // Шипы спереди
+                    ctx.strokeStyle = '#d4a373';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(-20, -8); ctx.lineTo(-28, -12);
+                    ctx.moveTo(-20, 0); ctx.lineTo(-30, 0);
+                    ctx.moveTo(-20, 8); ctx.lineTo(-28, 12);
+                    ctx.stroke();
+                    // Текст над ними
+                    ctx.fillStyle = '#ff3333';
+                    ctx.font = '10px Courier New';
+                    ctx.fillText(`Рейдер [ HP:${ent.hp} ]`, -35, -20);
+
+                } else if (ent.type === TYPES.ANOMALY) {
+                    // Аномалия петли времени (сверкающий хроно-вихрь)
+                    let pulse = Math.sin(Date.now() * 0.01) * 5;
+                    let grad = ctx.createRadialGradient(0, 0, 5, 0, 0, 25 + pulse);
+                    grad.addColorStop(0, '#33ccff');
+                    grad.addColorStop(0.5, 'rgba(150, 0, 255, 0.4)');
+                    grad.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath(); ctx.arc(0, 0, 30 + pulse, 0, Math.PI*2); ctx.fill();
+                    
+                    ctx.fillStyle = '#33ccff';
+                    ctx.font = '10px Courier New';
+                    ctx.fillText("ХРОНО-ВЫХРЬ", -30, -30);
+
+                } else if (ent.type === TYPES.BARREL) {
+                    // Бочка с топливом
+                    ctx.fillStyle = '#224422';
+                    ctx.fillRect(-10, -14, 20, 28);
+                    ctx.strokeStyle = '#00ff00';
+                    ctx.strokeRect(-10, -14, 20, 28);
+                    // Полоски на бочке
+                    ctx.beginPath(); ctx.moveTo(-10, -5); ctx.lineTo(10, -5); ctx.moveTo(-10, 5); ctx.lineTo(10, 5); ctx.stroke();
+                    ctx.fillStyle = '#00ff00';
+                    ctx.font = '10px Courier New';
+                    ctx.fillText("ТОПЛИВО", -22, -20);
+                }
+
+                ctx.restore();
+            });
+        }
+
+        // --- ЛОГИКА И ИНИЦИАЛИЗАЦИЯ ИГРЫ ---
+        function initLoop() {
+            Game = {
+                hp: MetaProgression.bonusHpMax,
+                hpMax: MetaProgression.bonusHpMax,
+                fuel: MetaProgression.bonusFuelMax,
+                fuelMax: MetaProgression.bonusFuelMax,
+                atk: MetaProgression.bonusAtk,
+                speed: MetaProgression.bonusSpeed,
+                distance: 0,
+                targetDistance: 20,
+                playerX: 100,
+                playerY: 250,
+                entities: [],
+                isGameOver: false,
+                isWon: false,
+                phase: 'PLAYER' // PLAYER, ENEMY
+            };
+            
+            spawnEntities();
+            logMessage(`--- НАЧАЛО ПЕТЛИ №${MetaProgression.loopCount} ---`, 'loop');
+            logMessage("Вы выехали из укрытия. Впереди 20 км опасной дороги.");
+            updateUI();
+        }
+
+        function spawnEntities() {
+            Game.entities = [];
+            // Генерируем угрозы и объекты на ключевых отметках километров
+            for (let km = 2; km < Game.targetDistance; km += 2) {
+                let typeRand = Math.random();
+                let type = TYPES.REIDER;
+                let hp = 30 + (km * 2); // Рейдеры сильнее ближе к концу
+
+                if (typeRand < 0.25) {
+                    type = TYPES.BARREL;
+                } else if (typeRand < 0.5) {
+                    type = TYPES.ANOMALY;
+                }
+
+                // Переводим километры в экранные координаты для визуализации
+                // Объекты распределяются равномерно по экрану в зависимости от их километража
+                let screenX = 150 + (km * 22); 
+                let screenY = 220 + (Math.random() * 60 - 30); // Небольшой разброс по высоте дороги
+
+                Game.entities.push({
+                    km: km,
+                    type: type,
+                    hp: hp,
+                    maxHp: hp,
+                    screenX: screenX,
+                    screenY: screenY,
+                    destroyed: false
+                });
+            }
+        }
+
+        // --- ИГРОВОЙ ИНТЕРФЕЙС И КНОПКИ ---
+        function updateUI() {
+            document.getElementById('ui-hp').innerText = `${Game.hp}/${Game.hpMax}`;
+            document.getElementById('ui-fuel').innerText = `${Game.fuel}/${Game.fuelMax}`;
+            document.getElementById('ui-atk').innerText = Game.atk;
+            document.getElementById('ui-speed').innerText = `${Game.speed} км/ход`;
+            document.getElementById('ui-dist').innerText = `${Game.distance} / ${Game.targetDistance} км`;
+            document.getElementById('ui-loop').innerText = MetaProgression.loopCount;
+
+            const btnMove = document.getElementById('btn-move');
+            const btnScavenge = document.getElementById('btn-scavenge');
+            const uiPhase = document.getElementById('ui-phase');
+
+            if (Game.phase === 'PLAYER' && !Game.isGameOver && !Game.isWon) {
+                btnMove.disabled = false;
+                btnScavenge.disabled = false;
+                uiPhase.innerText = "Ваш Ход";
+                uiPhase.style.color = "#00ff00";
+            } else {
+                btnMove.disabled = true;
+                btnScavenge.disabled = true;
+                if (Game.phase === 'ENEMY') {
+                    uiPhase.innerText = "Ход Врагов...";
+                    uiPhase.style.color = "#ff3333";
+                }
+            }
+
+            // Корректируем визуальное положение машины на экране в зависимости от прогресса
+            Game.playerX = 80 + (Game.distance * 22);
+        }
+
+        function logMessage(text, styleClass = '') {
+            const logBox = document.getElementById('log');
+            const span = document.createElement('div');
+            if(styleClass) span.className = styleClass;
+            span.innerText = `[км ${Game.distance}] ${text}`;
+            logBox.appendChild(span);
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        // --- МЕХАНИКА: УПРАВЛЕНИЕ ТРАНСПОРТОМ И ХОД ИГРОКА ---
+        document.getElementById('btn-move').addEventListener('click', () => {
+            if (Game.phase !== 'PLAYER') return;
+
+            if (Game.fuel <= 0) {
+                logMessage("Нет топлива для движения! Пришлось искать на месте.", 'danger');
+                scavengeAction();
+                return;
+            }
+
+            Game.fuel -= 1;
+            Game.distance += Game.speed;
+            logMessage(`Броневик продвинулся вперед на ${Game.speed} км.`);
+
+            checkLocation();
+        });
+
+        document.getElementById('btn-scavenge').addEventListener('click', () => {
+            if (Game.phase !== 'PLAYER') return;
+            scavengeAction();
+        });
+
+        function scavengeAction() {
+            // Остановка для обыска местности (Управление транспортом / риск)
+            let foundFuel = Math.floor(Math.random() * 15) + 10;
+            Game.fuel = Math.min(Game.fuelMax, Game.fuel + foundFuel);
+            logMessage(`Вы остановили броневик и обыскали руины. Найдено топливо: +${foundFuel}.`);
+            
+            // За остановку без продвижения рейдеры могут выследить (переход хода)
+            endPlayerTurn();
+        }
+
+        function checkLocation() {
+            if (Game.distance >= Game.targetDistance) {
+                Game.isWon = true;
+                triggerWin();
+                return;
+            }
+
+            // Проверяем, врезались ли мы или поравнялись с объектом
+            let currentEnemies = Game.entities.filter(e => !e.destroyed && e.km <= Game.distance);
+
+            if (currentEnemies.length > 0) {
+                let ent = currentEnemies[0]; // Берем первый встречный объект
+                
+                if (ent.type === TYPES.REIDER) {
+                    logMessage(`Дорогу преградил Бронетранспортер Рейдеров! Вступаем в бой!`, 'danger');
+                    // Автоматическая атака установленной на машине турелью
+                    ent.hp -= Game.atk;
+                    logMessage(`Ваша турель наносит рейдерам ${Game.atk} урона!`);
+                    
+                    if (ent.hp <= 0) {
+                        ent.destroyed = true;
+                        logMessage(`Машина рейдеров взорвана! Дорога свободна.`, 'highlight');
+                        endPlayerTurn();
+                    } else {
+                        logMessage(`Рейдер выдержал удар и готовит ответный залп!`);
+                        endPlayerTurn(); // Враг выжил, он атакует в свой ход
+                    }
+                } 
+                else if (ent.type === TYPES.ANOMALY) {
+                    ent.destroyed = true;
+                    logMessage(`Вы въехали в Хроно-вихрь! Петля реагирует нестабильно!`, 'loop');
+                    // Аномалия наносит урон, но дает мгновенный скачок энергии петли (замыкание)
+                    Game.hp -= 20;
+                    logMessage(`Взрыв хроно-энергии повредил обшивку на 20 HP.`, 'danger');
+                    if (Game.hp <= 0) {
+                        triggerLoopDeath();
+                    } else {
+                        // Принудительный вызов петли времени досрочно (но как бонус)
+                        triggerTimeLoopTriggeredByAnomaly();
+                    }
+                } 
+                else if (ent.type === TYPES.BARREL) {
+                    ent.destroyed = true;
+                    Game.fuel = Math.min(Game.fuelMax, Game.fuel + 20);
+                    logMessage(`Вы протаранили брошенную цистерну! Топливо дозаправлено (+20)`, 'highlight');
+                    endPlayerTurn();
+                }
+            } else {
+                endPlayerTurn();
+            }
+        }
+
+        function endPlayerTurn() {
+            updateUI();
+            if (Game.isGameOver || Game.isWon) return;
+
+            Game.phase = 'ENEMY';
+            updateUI();
+            
+            // Задержка ИИ врагов для ощущения пошаговости
+            setTimeout(enemyTurn, 800);
+        }
+
+        // --- ХОД ВРАГОВ ---
+        function enemyTurn() {
+            // Рейдеры, которые находятся на одной дистанции с игроком или сзади, атакуют броневик
+            let activeEnemies = Game.entities.filter(e => !e.destroyed && e.km <= Game.distance && e.type === TYPES.REIDER);
+
+            activeEnemies.forEach(enemy => {
+                let dmg = 15 + Math.floor(Math.random() * 10);
+                Game.hp -= dmg;
+                logMessage(`Рейдеры ведут огонь по вашему транспорту! Нанесено урона: -${dmg}`, 'danger');
+            });
+
+            // Проверка проигрыша по прочности машины
+            if (Game.hp <= 0) {
+                triggerLoopDeath();
+                return;
+            }
+
+            // Возврат хода игроку
+            Game.phase = 'PLAYER';
+            updateUI();
+        }
+
+        // --- МЕХАНИКА: ПЕТЛЯ ВРЕМЕНИ И ВЫБОР БОНУСОВ ---
+        function triggerLoopDeath() {
+            Game.isGameOver = true;
+            logMessage(`!!! БРОНЕВИК УНИЧТОЖЕН !!!`, 'danger');
+            logMessage(`Вспышка энергии... Время сворачивается обратно...`, 'loop');
+            
+            setTimeout(() => {
+                showBonusSelection();
+            }, 1500);
+        }
+
+        function triggerTimeLoopTriggeredByAnomaly() {
+            logMessage(`Хроно-вихрь перегружает системы броневика! Временной откат!`, 'loop');
+            setTimeout(() => {
+                showBonusSelection();
+            }, 1500);
+        }
+
+        function showBonusSelection() {
+            const screen = document.getElementById('bonus-screen');
+            const optionsContainer = document.getElementById('bonus-options');
+            optionsContainer.innerHTML = ''; // Очистка старых кнопок
+
+            // Три фиксированных варианта перманентного улучшения транспорта
+            const bonuses = [
+                { text: "Усилить титановую броню (+25 к макс. HP корпуса)", action: () => { MetaProgression.bonusHpMax += 25; } },
+                { text: "Поставить форсированный движок (+1 км за ход, тратит столько же топлива)", action: () => { MetaProgression.bonusSpeed += 1; } },
+                { text: "Установить крупнокалиберную турель (+15 к урону пушки)", action: () => { MetaProgression.bonusAtk += 15; } }
+            ];
+
+            bonuses.forEach(bonus => {
+                const btn = document.createElement('button');
+                btn.className = 'btn';
+                btn.innerText = bonus.text;
+                btn.onclick = () => {
+                    bonus.action();
+                    MetaProgression.loopCount += 1;
+                    screen.style.display = 'none';
+                    initLoop(); // Перезапуск мира с сохранением накопленных бонусов
+                };
+                optionsContainer.appendChild(btn);
+            });
+
+            screen.style.display = 'block';
+        }
+
+        function triggerWin() {
+            logMessage(`ЦИТАДЕЛЬ ДОСТИГНУТА! Вы вырвались из временного ада Пустоши!`, 'highlight');
+            alert(`ПОБЕДА! Вы доехали до безопасной зоны за ${MetaProgression.loopCount} циклов петли времени!`);
+        }
+
+        // --- ИГРОВОЙ ЦИКЛ РЕНДЕРА (АНИМАЦИЯ) ---
+        function render() {
+            drawBackground();
+            drawEntities();
+            
+            // Отрисовка игрока
+            if (!Game.isGameOver) {
+                drawTruck(Game.playerX, Game.playerY);
+            }
+
+            requestAnimationFrame(render);
+        }
+
+        // --- СТАРТ ИГРЫ ---
+        initLoop();
+        render();
+
+    </script>
+</body>
+</html>

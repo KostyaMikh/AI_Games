@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Shadow Dominion</title>
+<style>
+body {
+  margin: 0;
+  background: radial-gradient(circle at top, #222 0%, #090909 70%);
+  overflow: hidden;
+  font-family: Arial, sans-serif;
+  color: white;
+}
+canvas {
+  display: block;
+  margin: auto;
+  background: linear-gradient(#111, #050505);
+  box-shadow: 0 0 40px #000;
+}
+#ui {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  color: #ddd;
+  text-shadow: 0 0 8px #fff3;
+}
+button {
+  background: #111;
+  color: white;
+  border: 1px solid #555;
+  padding: 8px 12px;
+  margin: 3px;
+  cursor: pointer;
+}
+button:hover {
+  background: #222;
+}
+</style>
+  <link rel="stylesheet" href="hub-nav.css">
+</head>
+<body>
+<a class="hub-nav" href="index.html">AI-GAMES</a>
+<div id="ui">
+  <h2>SHADOW DOMINION</h2>
+  <div>
+    Цель: уничтожить всех врагов. Если погибнет ваш Теневой Лорд — поражение.
+  </div>
+  <div>
+    Механики: Цепные реакции • Невидимость • Замедление времени
+  </div>
+  <button onclick="endTurn()">Завершить ход</button>
+  <div id="status"></div>
+</div>
+<canvas id="game" width="960" height="640"></canvas>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const TILE = 64;
+const COLS = 15;
+const ROWS = 10;
+
+let currentTeam = 'player';
+let selected = null;
+let gameOver = false;
+let particles = [];
+let slowTime = false;
+let slowTimer = 0;
+
+const map = [];
+for (let y=0;y<ROWS;y++) {
+  map[y] = [];
+  for (let x=0;x<COLS;x++) {
+    map[y][x] = Math.random() > 0.82 ? 1 : 0;
+  }
+}
+
+class Unit {
+  constructor(x,y,team,type) {
+    this.x=x;
+    this.y=y;
+    this.team=team;
+    this.type=type;
+    this.hp=100;
+    this.moved=false;
+    this.visible=true;
+    this.invisibleTurns=0;
+    this.cooldown=0;
+  }
+
+  draw() {
+    let px=this.x*TILE+TILE/2;
+    let py=this.y*TILE+TILE/2;
+
+    ctx.save();
+
+    if(this.invisibleTurns>0){
+      ctx.globalAlpha = 0.18;
+    }
+
+    if(this.team==='player'){
+      ctx.fillStyle='#ddd';
+      ctx.shadowColor='#fff';
+    } else {
+      ctx.fillStyle='#000';
+      ctx.shadowColor='#666';
+    }
+
+    ctx.shadowBlur=20;
+
+    ctx.beginPath();
+
+    if(this.type==='lord'){
+      ctx.moveTo(px,py-26);
+      ctx.lineTo(px+24,py+26);
+      ctx.lineTo(px-24,py+26);
+    }
+    else if(this.type==='assassin'){
+      ctx.arc(px,py,18,0,Math.PI*2);
+    }
+    else {
+      ctx.rect(px-18,py-18,36,36);
+    }
+
+    ctx.fill();
+
+    ctx.restore();
+
+    if(selected===this){
+      ctx.strokeStyle='white';
+      ctx.lineWidth=2;
+      ctx.strokeRect(this.x*TILE+6,this.y*TILE+6,TILE-12,TILE-12);
+    }
+
+    ctx.fillStyle='red';
+    ctx.fillRect(this.x*TILE+8,this.y*TILE+54,48,4);
+    ctx.fillStyle='lime';
+    ctx.fillRect(this.x*TILE+8,this.y*TILE+54,48*(this.hp/100),4);
+  }
+}
+
+const units = [
+  new Unit(1,1,'player','lord'),
+  new Unit(2,3,'player','assassin'),
+  new Unit(1,5,'player','mage'),
+
+  new Unit(13,8,'enemy','lord'),
+  new Unit(12,6,'enemy','assassin'),
+  new Unit(13,3,'enemy','mage')
+];
+
+function drawMap(){
+  for(let y=0;y<ROWS;y++){
+    for(let x=0;x<COLS;x++){
+      let px=x*TILE;
+      let py=y*TILE;
+
+      ctx.fillStyle=(x+y)%2===0?'#121212':'#0a0a0a';
+      ctx.fillRect(px,py,TILE,TILE);
+
+      ctx.strokeStyle='#1e1e1e';
+      ctx.strokeRect(px,py,TILE,TILE);
+
+      if(map[y][x]===1){
+        ctx.fillStyle='#050505';
+        ctx.beginPath();
+        ctx.moveTo(px+20,py+56);
+        ctx.lineTo(px+32,py+8);
+        ctx.lineTo(px+44,py+56);
+        ctx.fill();
+      }
+    }
+  }
+}
+
+function drawParticles(){
+  particles.forEach(p=>{
+    ctx.globalAlpha=p.life/100;
+    ctx.fillStyle=p.color;
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+    ctx.fill();
+    p.x+=p.vx;
+    p.y+=p.vy;
+    p.life--;
+  });
+  ctx.globalAlpha=1;
+  particles=particles.filter(p=>p.life>0);
+}
+
+function explosion(x,y,color){
+  for(let i=0;i<30;i++){
+    particles.push({
+      x:x,
+      y:y,
+      vx:(Math.random()-0.5)*5,
+      vy:(Math.random()-0.5)*5,
+      r:Math.random()*4+1,
+      color,
+      life:100
+    });
+  }
+}
+
+function getUnit(x,y){
+  return units.find(u=>u.x===x&&u.y===y&&u.hp>0);
+}
+
+function distance(a,b){
+  return Math.abs(a.x-b.x)+Math.abs(a.y-b.y);
+}
+
+canvas.addEventListener('click',e=>{
+  if(gameOver)return;
+
+  const rect=canvas.getBoundingClientRect();
+  const x=Math.floor((e.clientX-rect.left)/TILE);
+  const y=Math.floor((e.clientY-rect.top)/TILE);
+
+  const clicked=getUnit(x,y);
+
+  if(clicked && clicked.team===currentTeam){
+    selected=clicked;
+    return;
+  }
+
+  if(selected){
+    let dx=Math.abs(selected.x-x);
+    let dy=Math.abs(selected.y-y);
+
+    if(dx+dy<=2 && !getUnit(x,y)){
+      selected.x=x;
+      selected.y=y;
+      selected.moved=true;
+    }
+
+    let enemy=getUnit(x,y);
+    if(enemy && enemy.team!==selected.team){
+      attack(selected,enemy);
+    }
+  }
+});
+
+function attack(attacker,target){
+  if(distance(attacker,target)>3)return;
+
+  let dmg=25;
+
+  if(attacker.type==='mage'){
+    dmg=20;
+    chainReaction(target.x,target.y);
+  }
+
+  if(attacker.type==='assassin'){
+    attacker.invisibleTurns=2;
+  }
+
+  if(attacker.type==='lord' && attacker.cooldown===0){
+    slowTime=true;
+    slowTimer=2;
+    attacker.cooldown=4;
+  }
+
+  target.hp-=dmg;
+
+  explosion(target.x*TILE+32,target.y*TILE+32,'white');
+
+  if(target.hp<=0){
+    explosion(target.x*TILE+32,target.y*TILE+32,'#777');
+  }
+
+  selected=null;
+  checkGame();
+}
+
+function chainReaction(x,y){
+  const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+
+  dirs.forEach(d=>{
+    let u=getUnit(x+d[0],y+d[1]);
+    if(u){
+      u.hp-=15;
+      explosion(u.x*TILE+32,u.y*TILE+32,'#999');
+
+      dirs.forEach(dd=>{
+        let uu=getUnit(u.x+dd[0],u.y+dd[1]);
+        if(uu && uu!==u){
+          uu.hp-=8;
+          explosion(uu.x*TILE+32,uu.y*TILE+32,'#444');
+        }
+      });
+    }
+  });
+}
+
+function endTurn(){
+  if(gameOver)return;
+
+  units.forEach(u=>{
+    u.moved=false;
+
+    if(u.invisibleTurns>0){
+      u.invisibleTurns--;
+    }
+
+    if(u.cooldown>0){
+      u.cooldown--;
+    }
+  });
+
+  if(currentTeam==='player'){
+    currentTeam='enemy';
+    enemyTurn();
+  } else {
+    currentTeam='player';
+  }
+
+  if(slowTime){
+    slowTimer--;
+    if(slowTimer<=0){
+      slowTime=false;
+    }
+  }
+}
+
+function enemyTurn(){
+  let speed = slowTime ? 900 : 250;
+
+  let enemies=units.filter(u=>u.team==='enemy'&&u.hp>0);
+  let i=0;
+
+  function step(){
+    if(i>=enemies.length){
+      currentTeam='player';
+      checkGame();
+      return;
+    }
+
+    let e=enemies[i];
+
+    let targets=units.filter(u=>u.team==='player'&&u.hp>0&&u.invisibleTurns===0);
+
+    if(targets.length===0){
+      targets=units.filter(u=>u.team==='player'&&u.hp>0);
+    }
+
+    let t=targets.sort((a,b)=>distance(e,a)-distance(e,b))[0];
+
+    if(distance(e,t)<=3){
+      attack(e,t);
+    } else {
+      if(e.x<t.x)e.x--;
+      else if(e.x>t.x)e.x++;
+
+      if(e.y<t.y)e.y++;
+      else if(e.y>t.y)e.y--;
+    }
+
+    i++;
+    setTimeout(step,speed);
+  }
+
+  step();
+}
+
+function checkGame(){
+  for(let i=units.length-1;i>=0;i--){
+    if(units[i].hp<=0){
+      units.splice(i,1);
+    }
+  }
+
+  const playerLord=units.find(u=>u.team==='player'&&u.type==='lord');
+  const enemyLord=units.find(u=>u.team==='enemy'&&u.type==='lord');
+
+  if(!playerLord){
+    gameOver=true;
+    document.getElementById('status').innerHTML='<h1>ПОРАЖЕНИЕ</h1>';
+  }
+
+  if(!enemyLord){
+    gameOver=true;
+    document.getElementById('status').innerHTML='<h1>ПОБЕДА</h1>';
+  }
+}
+
+function drawFog(){
+  ctx.fillStyle='rgba(0,0,0,0.35)';
+  for(let i=0;i<40;i++){
+    ctx.beginPath();
+    ctx.arc(
+      (i*120+performance.now()*0.01)%canvas.width,
+      (i*53)%canvas.height,
+      60,
+      0,
+      Math.PI*2
+    );
+    ctx.fill();
+  }
+}
+
+function gameLoop(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  drawMap();
+
+  units.forEach(u=>u.draw());
+
+  drawParticles();
+
+  drawFog();
+
+  ctx.fillStyle='white';
+  ctx.font='18px Arial';
+
+  ctx.fillText('Ход: '+(currentTeam==='player'?'Игрок':'Тени'),20,25);
+
+  if(slowTime){
+    ctx.fillStyle='#aaa';
+    ctx.fillText('Замедление времени активно',20,50);
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+</body>
+</html>

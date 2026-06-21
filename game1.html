@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Isometric Metroidvania: Weight of the Void</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #1a1a1a;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #ui {
+            margin-bottom: 10px;
+            text-align: center;
+            font-size: 16px;
+            background: #2b2b2b;
+            padding: 10px;
+            border: 2px solid #555;
+            border-radius: 5px;
+        }
+        canvas {
+            border: 4px solid #444;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            image-rendering: pixelated;
+        }
+        .controls {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #aaa;
+        }
+    </style>
+    <link rel="stylesheet" href="hub-nav.css">
+</head>
+<body>
+<a class="hub-nav" href="index.html">AI-GAMES</a>
+
+<div id="ui">
+    <b>HP:</b> <span id="hp">100</span>/100 | 
+    <b>ВЕС:</b> <span id="weight">0</span>/<span id="maxWeight">100</span> кг (<span id="speedPct">100</span>% Скорости) | 
+    <b>Ключ:</b> <span id="hasKey">Нет</span>
+</div>
+
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+
+<div class="controls">
+    Управление: Стрелки / WASD — движение | Пробел — атака | Собрать лут — автоматический наезд
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// --- ИГРОВОЙ МИР (Изометрическая сетка Метроидвании) ---
+const TILE_W = 64;
+const TILE_H = 32;
+const MAP_SIZE = 14;
+
+// 0 - пусто, 1 - стена (пиксельный блок), 2 - дверь выхода (финал)
+const map = [
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    [1,0,0,0,1,0,0,0,0,1,0,0,0,1],
+    [1,0,1,0,1,0,1,1,0,1,0,1,0,1],
+    [1,0,1,0,0,0,1,0,0,0,0,1,0,1],
+    [1,1,1,1,1,0,1,1,1,1,0,1,1,1],
+    [1,0,0,0,1,0,0,0,0,1,0,0,0,1],
+    [1,0,1,0,1,1,1,2,1,1,1,1,0,1], // 2 - Дверь финала в центре карты
+    [1,0,1,0,0,0,0,0,0,0,0,1,0,1],
+    [1,0,1,1,1,1,0,1,1,1,0,1,0,1],
+    [1,0,0,0,0,1,0,1,0,0,0,1,0,1],
+    [1,1,1,1,0,1,0,1,0,1,1,1,0,1],
+    [1,0,0,0,0,1,0,0,0,1,0,0,0,1],
+    [1,0,1,1,1,1,1,1,1,1,0,1,0,1],
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+];
+
+// --- ИГРОК ---
+const player = {
+    isoX: 1, // Логические координаты в сетке
+    isoY: 1,
+    screenX: 0,
+    screenY: 0,
+    hp: 100,
+    maxHp: 100,
+    weight: 0,
+    maxWeight: 100,
+    baseSpeed: 0.05,
+    speed: 0.05,
+    hasKey: false,
+    dir: 'SE'
+};
+
+// --- СУЩЕСТВА И ОБЪЕКТЫ ---
+const enemies = [
+    { isoX: 3, isoY: 3, hp: 30, type: 'Creeper', isBoss: false },
+    { isoX: 11, isoY: 1, hp: 30, type: 'Creeper', isBoss: false },
+    { isoX: 1, isoY: 11, hp: 40, type: 'Golem', isBoss: false },
+    { isoX: 11, isoY: 11, hp: 150, type: 'KEEPER_BOSS', isBoss: true } // Хранитель ключа
+];
+
+const items = [
+    { isoX: 2, isoY: 3, type: 'Груз', weight: 45, name: 'Тяжелый Металл' },
+    { isoX: 12, isoY: 3, type: 'Перо', weight: 5, name: 'Легкое Перо' }
+];
+
+let gameState = 'PLAY'; // PLAY, WIN_GREED, WIN_ASCETIC, WIN_BALANCE, GAMEOVER
+let endingText = "";
+
+// --- ИЗОМЕТРИЧЕСКИЕ ФУНКЦИИ ПЕРЕВОДА КООРДИНАТ ---
+function spaceToIso(x, y) {
+    let screenX = (x - y) * (TILE_W / 2) + canvas.width / 2;
+    let screenY = (x + y) * (TILE_H / 2) + 100;
+    return { x: screenX, y: screenY };
+}
+
+// --- ОТРИСОВКА ПИКСЕЛЬ-АРТА НА ХОДУ (Процедурная пиксельная графика) ---
+function drawPixelTile(ctx, sx, sy, colorTop, colorLeft, colorRight, height=16) {
+    // Верхняя грань ромба
+    ctx.fillStyle = colorTop;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + TILE_W/2, sy + TILE_H/2);
+    ctx.lineTo(sx, sy + TILE_H);
+    ctx.lineTo(sx - TILE_W/2, sy + TILE_H/2);
+    ctx.closePath();
+    ctx.fill();
+
+    if (height > 0) {
+        // Левая грань куба
+        ctx.fillStyle = colorLeft;
+        ctx.beginPath();
+        ctx.moveTo(sx - TILE_W/2, sy + TILE_H/2);
+        ctx.lineTo(sx, sy + TILE_H);
+        ctx.lineTo(sx, sy + TILE_H + height);
+        ctx.lineTo(sx - TILE_W/2, sy + TILE_H/2 + height);
+        ctx.closePath();
+        ctx.fill();
+
+        // Правая грань куба
+        ctx.fillStyle = colorRight;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy + TILE_H);
+        ctx.lineTo(sx + TILE_W/2, sy + TILE_H/2);
+        ctx.lineTo(sx + TILE_W/2, sy + TILE_H/2 + height);
+        ctx.lineTo(sx, sy + TILE_H + height);
+        ctx.closePath();
+        ctx.fill();
+    }
+}
+
+function drawPixelSprite(ctx, sx, sy, type) {
+    ctx.save();
+    // Эмуляция пиксель-арта низкого разрешения масштабированием
+    if (type === 'player') {
+        // Тело персонажа (изометрический спрайт)
+        ctx.fillStyle = '#3a86ff'; // Синий комбинезон
+        ctx.fillRect(sx - 8, sy - 24, 16, 24);
+        ctx.fillStyle = '#ff006e'; // Шлем
+        ctx.fillRect(sx - 6, sy - 34, 12, 10);
+        ctx.fillStyle = '#ffbe0b'; // Рюкзак (меняется от веса визуально)
+        let bagSize = Math.min(14, 4 + (player.weight / 10));
+        ctx.fillRect(sx - 12, sy - 22, 5, bagSize);
+    } else if (type === 'Creeper') {
+        ctx.fillStyle = '#38b000';
+        ctx.fillRect(sx - 6, sy - 20, 12, 20);
+        ctx.fillStyle = '#70e000';
+        ctx.fillRect(sx - 4, sy - 18, 8, 6);
+    } else if (type === 'Golem') {
+        ctx.fillStyle = '#4a4e69';
+        ctx.fillRect(sx - 10, sy - 28, 20, 28);
+        ctx.fillStyle = '#9a8c98';
+        ctx.fillRect(sx - 6, sy - 24, 12, 10);
+    } else if (type === 'KEEPER_BOSS') {
+        ctx.fillStyle = '#7209b7';
+        ctx.fillRect(sx - 14, sy - 40, 28, 40);
+        ctx.fillStyle = '#f72585'; // Светящиеся глаза босса
+        ctx.fillRect(sx - 8, sy - 34, 4, 4);
+        ctx.fillRect(sx + 4, sy - 34, 4, 4);
+    } else if (type === 'loot') {
+        // Анимированный пиксельный сундук/мешок
+        let wave = Math.sin(Date.now() * 0.005) * 3;
+        ctx.fillStyle = '#ffbe0b';
+        ctx.fillRect(sx - 6, sy - 10 + wave, 12, 10);
+        ctx.fillStyle = '#d48c00';
+        ctx.fillRect(sx - 4, sy - 6 + wave, 8, 4);
+    } else if (type === 'key') {
+        ctx.fillStyle = '#00f5d4';
+        ctx.fillRect(sx - 4, sy - 15, 8, 15);
+    }
+    ctx.restore();
+}
+
+// --- СЛУЧАЙНЫЙ ЛУТ ФУНКЦИЯ ---
+function generateRandomLut(x, y) {
+    const lootTypes = [
+        { name: 'Тяжелое золото', weight: 35 },
+        { name: 'Древний хлам', weight: 20 },
+        { name: 'Мистическая пыль', weight: 2 },
+        { name: 'Плотный обломок', weight: 50 },
+        { name: 'Легкий кристалл', weight: 8 }
+    ];
+    const rolled = lootTypes[Math.floor(Math.random() * lootTypes.length)];
+    items.push({
+        isoX: x,
+        isoY: y,
+        type: 'Случайный Лут',
+        weight: rolled.weight,
+        name: rolled.name
+    });
+}
+
+// --- ИГРОВОЙ ЦИКЛ ОБНОВЛЕНИЯ ---
+const keysPressed = {};
+window.addEventListener('keydown', e => { keysPressed[e.key.toLowerCase()] = true; });
+window.addEventListener('keyup', e => { keysPressed[e.key.toLowerCase()] = false; });
+
+function update() {
+    if (gameState !== 'PLAY') return;
+
+    // Расчет скорости на основе баланса веса
+    // Формула: скорость падает пропорционально нагрузке. При 100кг скорость = 10% от базы. При >100кг = 0.
+    let weightRatio = player.weight / player.maxWeight;
+    if (weightRatio >= 1.0) {
+        player.speed = 0; // Полный перегруз
+    } else {
+        player.speed = player.baseSpeed * (1.0 - weightRatio * 0.9);
+    }
+
+    // Обновление UI элементов
+    document.getElementById('hp').innerText = Math.ceil(player.hp);
+    document.getElementById('weight').innerText = player.weight;
+    document.getElementById('speedPct').innerText = Math.max(0, Math.round((player.speed / player.baseSpeed) * 100));
+    document.getElementById('hasKey').innerText = player.hasKey ? "Есть (Вес +40кг!)" : "Нет";
+
+    // Движение дискретно-сглаженное для изометрии
+    let nextX = player.isoX;
+    let nextY = player.isoY;
+
+    if (keysPressed['arrowup'] || keysPressed['w']) { nextX -= player.speed; nextY -= player.speed; player.dir = 'NW'; }
+    if (keysPressed['arrowdown'] || keysPressed['s']) { nextX += player.speed; nextY += player.speed; player.dir = 'SE'; }
+    if (keysPressed['arrowleft'] || keysPressed['a']) { nextX -= player.speed; nextY += player.speed; player.dir = 'SW'; }
+    if (keysPressed['arrowright'] || keysPressed['d']) { nextX += player.speed; nextY -= player.speed; player.dir = 'NE'; }
+
+    // Коллизии со стенами
+    let checkCellX = Math.floor(nextX + 0.3 * Math.sign(nextX - player.isoX));
+    let checkCellY = Math.floor(nextY + 0.3 * Math.sign(nextY - player.isoY));
+
+    if (map[Math.floor(nextY)][Math.floor(nextX)] !== 1) {
+        // Проверка прохода через дверь финала
+        if (map[Math.floor(nextY)][Math.floor(nextX)] === 2) {
+            if (player.hasKey) {
+                // ПРОВЕРКА МУЛЬТИ-КОНЦОВОК НА ОСНОВЕ ВЕСА
+                if (player.weight >= 80) {
+                    gameState = 'WIN_GREED';
+                    endingText = "КОНЦОВКА ЖАДНОСТИ: Вы унесли столько сокровищ, что обрушили экономику снаружи, но едва не сломали позвоночник!";
+                } else if (player.weight <= 20) {
+                    gameState = 'WIN_ASCETIC';
+                    endingText = "КОНЦОВКА АСКЕТА: Вы вышли абсолютно налегке, оставив мирские богатства Бездне. Ваша душа свободна.";
+                } else {
+                    gameState = 'WIN_BALANCE';
+                    endingText = "КОНЦОВКА БАЛАНСА: Идеальное равновесие веса позволило вам выжить и сохранить трезвый рассудок.";
+                }
+            } else {
+                // Если ключа нет, дверь не пускает (Метроидвания-блок)
+                player.hp -= 0.1; // Небольшой урон от силового поля двери
+            }
+        } else {
+            player.isoX = nextX;
+            player.isoY = nextY;
+        }
+    }
+
+    // Сбор предметов при наезде
+    for (let i = items.length - 1; i >= 0; i--) {
+        let it = items[i];
+        let dist = Math.hypot(player.isoX - it.isoX, player.isoY - it.isoY);
+        if (dist < 0.5) {
+            player.weight += it.weight;
+            items.splice(i, 1);
+        }
+    }
+
+    // Логика врагов и Бой
+    enemies.forEach((enemy, idx) => {
+        if (enemy.hp <= 0) return;
+
+        // Простое преследование игрока
+        let edist = Math.hypot(player.isoX - enemy.isoX, player.isoY - enemy.isoY);
+        if (edist < 4 && edist > 0.2) {
+            enemy.isoX += Math.sign(player.isoX - enemy.isoX) * 0.02;
+            enemy.isoY += Math.sign(player.isoY - enemy.isoY) * 0.02;
+        }
+
+        // Враг атакует игрока
+        if (edist < 0.4) {
+            player.hp -= enemy.isBoss ? 0.5 : 0.2;
+            if (player.hp <= 0) {
+                gameState = 'GAMEOVER';
+            }
+        }
+
+        // Атака игрока (Пробел)
+        if (keysPressed[' '] && edist < 1.0) {
+            enemy.hp -= 2;
+            if (enemy.hp <= 0) {
+                if (enemy.isBoss) {
+                    player.hasKey = true;
+                    player.weight += 40; // Ключ Метроидвании ОЧЕНЬ тяжелый и ломает баланс веса!
+                } else {
+                    // Из обычных врагов сыпется СЛУЧАЙНЫЙ ЛУТ
+                    generateRandomLut(enemy.isoX, enemy.isoY);
+                }
+            }
+            keysPressed[' '] = false; // Одно нажатие — один удар
+        }
+    });
+}
+
+// --- ОТРИСОВКА ВСЕЙ СЦЕНЫ ---
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Отрисовка изометрической карты по слоям (Порядок отрисовки важен для правильного перекрытия объектов)
+    for (let y = 0; y < MAP_SIZE; y++) {
+        for (let x = 0; x < MAP_SIZE; x++) {
+            let isoPos = spaceToIso(x, y);
+
+            // Рендеринг пола / стен
+            if (map[y][x] === 1) {
+                // Пиксельная изометрическая стена (каменный блок)
+                drawPixelTile(ctx, isoPos.x, isoPos.y, '#4e4e4e', '#333333', '#222222', 24);
+            } else if (map[y][x] === 2) {
+                // Изометрические ворота финала
+                drawPixelTile(ctx, isoPos.x, isoPos.y, '#00f5d4', '#00bbf9', '#0077b6', 10);
+            } else {
+                // Обычный пол
+                drawPixelTile(ctx, isoPos.x, isoPos.y, '#2d3142', '#1f222e', '#161822', 0);
+            }
+
+            // Отрисовка лута на этом тайле
+            items.forEach(it => {
+                if (Math.floor(it.isoX) === x && Math.floor(it.isoY) === y) {
+                    let itemIso = spaceToIso(it.isoX, it.isoY);
+                    drawPixelSprite(ctx, itemIso.x, itemIso.y, 'loot');
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '10px monospace';
+                    ctx.fillText(`${it.name} (${it.weight}кг)`, itemIso.x - 20, itemIso.y - 15);
+                }
+            });
+
+            // Отрисовка врагов на этом тайле
+            enemies.forEach(enemy => {
+                if (enemy.hp > 0 && Math.floor(enemy.isoX) === x && Math.floor(enemy.isoY) === y) {
+                    let enemyIso = spaceToIso(enemy.isoX, enemy.isoY);
+                    drawPixelSprite(ctx, enemyIso.x, enemyIso.y, enemy.type);
+                    
+                    // Полоска HP врага
+                    ctx.fillStyle = 'red';
+                    ctx.fillRect(enemyIso.x - 10, enemyIso.y - 45, 20, 3);
+                    ctx.fillStyle = 'green';
+                    let hpW = (enemy.hp / (enemy.isBoss ? 150 : 30)) * 20;
+                    ctx.fillRect(enemyIso.x - 10, enemyIso.y - 45, hpW, 3);
+                }
+            });
+
+            // Отрисовка игрока
+            if (Math.floor(player.isoX) === x && Math.floor(player.isoY) === y) {
+                let pIso = spaceToIso(player.isoX, player.isoY);
+                drawPixelSprite(ctx, pIso.x, pIso.y, 'player');
+                
+                // Эффект атаки (пиксельная вспышка при зажатом пробеле)
+                if (keysPressed[' ']) {
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(pIso.x, pIso.y - 15, 15, 0, Math.PI*2);
+                    ctx.fill();
+                }
+            }
+        }
+    }
+
+    // Экраны состояний игры (Победа/Проигрыш)
+    if (gameState !== 'PLAY') {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.textAlign = 'center';
+        ctx.font = '20px Courier New';
+
+        if (gameState === 'GAMEOVER') {
+            ctx.fillStyle = '#ff0055';
+            ctx.fillText("ВЫ ПОГИБЛИ В БЕЗДНЕ", canvas.width / 2, canvas.height / 2 - 20);
+            ctx.fillStyle = '#fff';
+            ctx.fillText("Вес вашего снаряжения потянул вас на дно...", canvas.width / 2, canvas.height / 2 + 20);
+        } else {
+            ctx.fillStyle = '#00ffcc';
+            ctx.fillText("ВЫ ВЫБРАЛИСЬ ИЗ ШАХТЫ!", canvas.width / 2, canvas.height / 2 - 40);
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px Courier New';
+            wrapText(ctx, endingText, canvas.width / 2, canvas.height / 2, 600, 24);
+        }
+        
+        ctx.fillStyle = '#aaa';
+        ctx.fillText("Обновите страницу (F5), чтобы играть снова", canvas.width / 2, canvas.height / 2 + 100);
+    }
+}
+
+// Помощник переноса длинного текста концовок
+function wrapText(context, text, x, y, maxWidth, lineHeight) {
+    let words = text.split(' ');
+    let line = '';
+    for(let n = 0; n < words.length; n++) {
+        let testLine = line + words[n] + ' ';
+        let metrics = context.measureText(testLine);
+        let testWidth = metrics.width;
+        if (testWidth > maxWidth && n > 0) {
+            context.fillText(line, x, y);
+            line = words[n] + ' ';
+            y += lineHeight;
+        }
+        else {
+            line = testLine;
+        }
+    }
+    context.fillText(line, x, y);
+}
+
+// Главный игровой цикл
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+// Старт игры
+loop();
+</script>
+
+</body>
+</html>

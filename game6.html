@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Пепельный Цикл</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #14110f;
+    color: #e5d3b3;
+    font-family: Arial, sans-serif;
+    overflow: hidden;
+  }
+
+  #game {
+    display: grid;
+    grid-template-columns: 820px 320px;
+    height: 100vh;
+  }
+
+  #leftPanel {
+    position: relative;
+    background: linear-gradient(#2a241f, #171311);
+    border-right: 3px solid #6f5643;
+  }
+
+  canvas {
+    display: block;
+    margin: 10px auto;
+    border: 3px solid #6f5643;
+    background: #2c241d;
+    image-rendering: pixelated;
+  }
+
+  #ui {
+    padding: 14px;
+    overflow-y: auto;
+  }
+
+  h1 {
+    margin-top: 0;
+    color: #ffba66;
+    text-shadow: 0 0 10px #ff8f00;
+  }
+
+  .panel {
+    background: rgba(0,0,0,0.35);
+    border: 2px solid #604631;
+    border-radius: 10px;
+    padding: 10px;
+    margin-bottom: 12px;
+  }
+
+  button {
+    width: 100%;
+    margin-top: 6px;
+    padding: 10px;
+    border: none;
+    border-radius: 8px;
+    background: #6d4b2f;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.15s;
+  }
+
+  button:hover {
+    background: #8d633f;
+    transform: scale(1.02);
+  }
+
+  button:disabled {
+    background: #444;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .stat {
+    margin: 6px 0;
+  }
+
+  .log {
+    height: 180px;
+    overflow-y: auto;
+    font-size: 14px;
+    background: rgba(0,0,0,0.25);
+    padding: 6px;
+    border-radius: 8px;
+  }
+
+  .bonusBtn {
+    background: #3f5c30;
+  }
+
+  .danger {
+    color: #ff7272;
+  }
+
+  .victory {
+    color: #9dff7d;
+  }
+</style>
+<link rel="stylesheet" href="hub-nav.css">
+</head>
+<body>
+<a class="hub-nav" href="index.html">AI-GAMES</a>
+<div id="game">
+  <div id="leftPanel">
+    <canvas id="canvas" width="800" height="800"></canvas>
+  </div>
+
+  <div id="ui">
+    <h1>ПЕПЕЛЬНЫЙ ЦИКЛ</h1>
+
+    <div class="panel">
+      <div class="stat">День: <span id="turn">1</span></div>
+      <div class="stat">Петля времени: <span id="loop">1</span></div>
+      <div class="stat">HP: <span id="hp">10</span></div>
+      <div class="stat">Топливо: <span id="fuel">5</span></div>
+      <div class="stat">Запчасти: <span id="parts">0</span></div>
+      <div class="stat">Артефакты: <span id="artifacts">0</span>/4</div>
+    </div>
+
+    <div class="panel">
+      <strong>Управление транспортом</strong>
+      <button id="moveBtn">Сделать ход</button>
+      <button id="repairBtn">Починить транспорт (+3 HP за 2 запчасти)</button>
+      <button id="refuelBtn">Заправить (+3 топлива за 1 запчасть)</button>
+    </div>
+
+    <div class="panel">
+      <strong>Выбор бонуса</strong>
+      <div id="bonusArea">Бонус появится после 3 дня.</div>
+    </div>
+
+    <div class="panel">
+      <strong>События</strong>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+const TILE = 80;
+const SIZE = 10;
+
+const terrainColors = {
+  ash: '#5c5149',
+  toxic: '#3d6b39',
+  ruin: '#6f5643',
+  metal: '#818181'
+};
+
+const state = {
+  turn: 1,
+  loop: 1,
+  hp: 10,
+  fuel: 5,
+  parts: 0,
+  artifacts: 0,
+  damageBoost: 0,
+  fuelEfficiency: 0,
+  reveal: false,
+  gameOver: false,
+  map: [],
+  enemies: [],
+  player: { x: 0, y: 0 },
+  loopMemory: {
+    bonusPermanent: false,
+    discoveredArtifacts: 0
+  }
+};
+
+function rand(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function generateMap() {
+  state.map = [];
+  state.enemies = [];
+
+  for (let y = 0; y < SIZE; y++) {
+    let row = [];
+
+    for (let x = 0; x < SIZE; x++) {
+      let type = rand(['ash','ash','ash','ruin','toxic']);
+      row.push({
+        type,
+        artifact: Math.random() < 0.08,
+        parts: Math.random() < 0.12,
+        visited: false
+      });
+
+      if (Math.random() < 0.12 && !(x === 0 && y === 0)) {
+        state.enemies.push({
+          x,
+          y,
+          hp: 2 + state.loop,
+          attack: 1 + Math.floor(state.loop / 2)
+        });
+      }
+    }
+
+    state.map.push(row);
+  }
+
+  for (let i = 0; i < 4; i++) {
+    let ax = Math.floor(Math.random() * SIZE);
+    let ay = Math.floor(Math.random() * SIZE);
+    state.map[ay][ax].artifact = true;
+  }
+
+  state.player = { x: 0, y: 0 };
+}
+
+function log(text) {
+  const el = document.getElementById('log');
+  el.innerHTML = text + '<br>' + el.innerHTML;
+}
+
+function updateUI() {
+  document.getElementById('turn').textContent = state.turn;
+  document.getElementById('loop').textContent = state.loop;
+  document.getElementById('hp').textContent = state.hp;
+  document.getElementById('fuel').textContent = state.fuel;
+  document.getElementById('parts').textContent = state.parts;
+  document.getElementById('artifacts').textContent = state.artifacts;
+
+  document.getElementById('repairBtn').disabled = state.parts < 2;
+  document.getElementById('refuelBtn').disabled = state.parts < 1;
+}
+
+function draw() {
+  ctx.clearRect(0,0,800,800);
+
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      const tile = state.map[y][x];
+
+      ctx.fillStyle = terrainColors[tile.type];
+      ctx.fillRect(x*TILE, y*TILE, TILE-2, TILE-2);
+
+      if (tile.parts) {
+        ctx.fillStyle = '#c7c7c7';
+        ctx.fillRect(x*TILE+28, y*TILE+28, 20, 20);
+      }
+
+      if (tile.artifact) {
+        ctx.fillStyle = '#00e1ff';
+        ctx.beginPath();
+        ctx.arc(x*TILE+40, y*TILE+40, 14, 0, Math.PI*2);
+        ctx.fill();
+      }
+
+      if (tile.type === 'toxic') {
+        ctx.fillStyle = 'rgba(0,255,0,0.12)';
+        for(let i=0;i<6;i++){
+          ctx.fillRect(x*TILE + Math.random()*60, y*TILE + Math.random()*60, 5,5);
+        }
+      }
+    }
+  }
+
+  for (const e of state.enemies) {
+    ctx.fillStyle = '#c43131';
+    ctx.beginPath();
+    ctx.arc(e.x*TILE+40, e.y*TILE+40, 22, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(e.x*TILE+25, e.y*TILE+30, 8,8);
+    ctx.fillRect(e.x*TILE+47, e.y*TILE+30, 8,8);
+  }
+
+  const px = state.player.x*TILE;
+  const py = state.player.y*TILE;
+
+  ctx.fillStyle = '#d9b36a';
+  ctx.fillRect(px+10, py+22, 60, 34);
+
+  ctx.fillStyle = '#222';
+  ctx.fillRect(px+18, py+30, 24, 16);
+  ctx.fillRect(px+48, py+30, 14, 16);
+
+  ctx.fillStyle = '#111';
+  ctx.beginPath();
+  ctx.arc(px+22, py+60, 10, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(px+58, py+60, 10, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.strokeStyle = '#ffdc73';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(px+4, py+4, 72,72);
+}
+
+function enemyAt(x,y) {
+  return state.enemies.find(e => e.x === x && e.y === y);
+}
+
+function combat(enemy) {
+  enemy.hp -= 1 + state.damageBoost;
+  log('Бой с рейдером!');
+
+  if (enemy.hp <= 0) {
+    state.enemies = state.enemies.filter(e => e !== enemy);
+    state.parts += 1;
+    log('Рейдер уничтожен. Получена запчасть.');
+    return;
+  }
+
+  state.hp -= enemy.attack;
+  log('Транспорт повреждён!');
+}
+
+function checkTile() {
+  const tile = state.map[state.player.y][state.player.x];
+
+  if (tile.parts) {
+    tile.parts = false;
+    state.parts += 1;
+    log('Найдены запчасти.');
+  }
+
+  if (tile.artifact) {
+    tile.artifact = false;
+    state.artifacts += 1;
+    state.loopMemory.discoveredArtifacts++;
+    log('Найден временной артефакт.');
+
+    if (state.artifacts >= 4) {
+      victory();
+    }
+  }
+
+  if (tile.type === 'toxic') {
+    state.hp -= 1;
+    log('Токсичная зона нанесла урон.');
+  }
+
+  const enemy = enemyAt(state.player.x, state.player.y);
+  if (enemy) combat(enemy);
+
+  if (state.hp <= 0 || state.fuel <= 0) {
+    triggerTimeLoop();
+  }
+}
+
+function victory() {
+  state.gameOver = true;
+  log('<span class="victory">Вы собрали все артефакты и разорвали цикл.</span>');
+  alert('ПОБЕДА! Цикл времени разрушен.');
+}
+
+function triggerTimeLoop() {
+  log('<span class="danger">Временная петля активирована.</span>');
+
+  state.loop++;
+  state.turn = 1;
+  state.hp = 10 + (state.loopMemory.bonusPermanent ? 2 : 0);
+  state.fuel = 5;
+  state.parts = 0;
+  state.artifacts = Math.max(0, state.loopMemory.discoveredArtifacts - 1);
+
+  generateMap();
+  updateUI();
+  draw();
+
+  alert('Петля времени перезапустила мир. Часть знаний сохранена.');
+}
+
+function giveBonusChoices() {
+  const area = document.getElementById('bonusArea');
+  area.innerHTML = '';
+
+  const bonuses = [
+    {
+      title: 'Бронированный кузов',
+      effect: () => {
+        state.hp += 3;
+        state.loopMemory.bonusPermanent = true;
+      }
+    },
+    {
+      title: 'Экономия топлива',
+      effect: () => state.fuelEfficiency = 1
+    },
+    {
+      title: 'Усиленное оружие',
+      effect: () => state.damageBoost = 1
+    }
+  ];
+
+  bonuses.forEach(b => {
+    const btn = document.createElement('button');
+    btn.className = 'bonusBtn';
+    btn.textContent = b.title;
+
+    btn.onclick = () => {
+      b.effect();
+      area.innerHTML = 'Бонус выбран: ' + b.title;
+      log('Получен бонус: ' + b.title);
+      updateUI();
+    };
+
+    area.appendChild(btn);
+  });
+}
+
+function nextTurn() {
+  if (state.gameOver) return;
+
+  const dirs = [
+    [1,0],[-1,0],[0,1],[0,-1]
+  ];
+
+  const valid = dirs.filter(d => {
+    const nx = state.player.x + d[0];
+    const ny = state.player.y + d[1];
+    return nx >=0 && ny >=0 && nx < SIZE && ny < SIZE;
+  });
+
+  const move = rand(valid);
+
+  state.player.x += move[0];
+  state.player.y += move[1];
+
+  state.turn++;
+  state.fuel -= state.fuelEfficiency ? 0 : 1;
+
+  if (state.turn === 3) {
+    giveBonusChoices();
+  }
+
+  checkTile();
+  updateUI();
+  draw();
+}
+
+canvas.addEventListener('click', e => {
+  if (state.gameOver) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = Math.floor((e.clientX - rect.left) / TILE);
+  const y = Math.floor((e.clientY - rect.top) / TILE);
+
+  const dx = Math.abs(x - state.player.x);
+  const dy = Math.abs(y - state.player.y);
+
+  if (dx + dy !== 1) return;
+  if (state.fuel <= 0) return;
+
+  state.player.x = x;
+  state.player.y = y;
+
+  state.turn++;
+  state.fuel -= state.fuelEfficiency ? 0 : 1;
+
+  if (state.turn === 3) {
+    giveBonusChoices();
+  }
+
+  checkTile();
+  updateUI();
+  draw();
+});
+
+
+document.getElementById('moveBtn').onclick = nextTurn;
+
+document.getElementById('repairBtn').onclick = () => {
+  state.parts -= 2;
+  state.hp += 3;
+  log('Транспорт отремонтирован.');
+  updateUI();
+};
+
+document.getElementById('refuelBtn').onclick = () => {
+  state.parts -= 1;
+  state.fuel += 3;
+  log('Транспорт заправлен.');
+  updateUI();
+};
+
+function start() {
+  generateMap();
+  updateUI();
+  draw();
+
+  log('Мир уничтожен. Найдите 4 временных артефакта.');
+  log('Если транспорт уничтожен — цикл начнётся заново.');
+}
+
+start();
+</script>
+</body>
+</html>

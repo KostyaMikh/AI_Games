@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Акварельный Кликер</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      overflow: hidden;
+      font-family: Georgia, serif;
+      background: radial-gradient(circle at top, #bcd5ff, #f4ead9);
+      color: #394761;
+    }
+
+    #game {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .ui {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(255,255,255,0.55);
+      border: 1px solid rgba(80,80,120,0.2);
+      backdrop-filter: blur(8px);
+      padding: 18px;
+      border-radius: 24px;
+      width: 320px;
+      z-index: 10;
+    }
+
+    .ui h1 {
+      font-size: 32px;
+      margin-bottom: 12px;
+    }
+
+    .stats {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .shop {
+      display: grid;
+      gap: 10px;
+    }
+
+    button {
+      border: none;
+      padding: 12px;
+      border-radius: 16px;
+      cursor: pointer;
+      font-size: 16px;
+      background: rgba(143,109,214,0.85);
+      color: white;
+      transition: 0.2s;
+    }
+
+    button:hover {
+      transform: scale(1.03);
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.35);
+      backdrop-filter: blur(5px);
+      z-index: 20;
+    }
+
+    .panel {
+      background: rgba(255,255,255,0.85);
+      padding: 40px;
+      border-radius: 32px;
+      text-align: center;
+      max-width: 520px;
+    }
+
+    .panel h2 {
+      font-size: 52px;
+      margin-bottom: 16px;
+    }
+
+    .panel p {
+      font-size: 20px;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+  </style>
+  <link rel="stylesheet" href="hub-nav.css">
+</head>
+<body>
+  <a class="hub-nav" href="index.html">AI-GAMES</a>
+  <div id="game">
+    <canvas id="canvas"></canvas>
+
+    <div class="ui">
+      <h1>Акварельный Кликер</h1>
+
+      <div class="stats">
+        <div>Очки: <span id="score">0</span></div>
+        <div>Энергия: <span id="energy">100</span></div>
+        <div>Время: <span id="time">180</span></div>
+        <div>Фаза: <span id="phase">День</span></div>
+        <div>Врагов: <span id="enemyCount">0</span></div>
+      </div>
+
+      <div class="shop">
+        <button onclick="buyDamage()">+ Урон (25)</button>
+        <button onclick="buyAOE()">+ Урон по площади (40)</button>
+        <button onclick="buyVision()">+ Обнаружение (50)</button>
+      </div>
+    </div>
+
+    <div class="overlay" id="overlay">
+      <div class="panel">
+        <h2 id="endTitle"></h2>
+        <p id="endText"></p>
+        <button onclick="restart()">Играть снова</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+
+    resize();
+    window.addEventListener('resize', resize);
+
+    const scoreEl = document.getElementById('score');
+    const energyEl = document.getElementById('energy');
+    const timeEl = document.getElementById('time');
+    const phaseEl = document.getElementById('phase');
+    const enemyCountEl = document.getElementById('enemyCount');
+
+    let score = 0;
+    let energy = 100;
+    let timeLeft = 180;
+
+    let damage = 5;
+    let aoe = 90;
+    let vision = 0;
+
+    let enemies = [];
+    let particles = [];
+
+    let gameOver = false;
+    let tick = 0;
+
+    function isNight() {
+      return Math.floor(tick / 16) % 2 === 1;
+    }
+
+    function spawnEnemy() {
+      enemies.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        hp: isNight() ? 50 : 34,
+        maxHp: isNight() ? 50 : 34,
+        r: 25 + Math.random() * 16,
+        hidden: Math.random() < (isNight() ? 0.72 : 0.35),
+        vx: (Math.random() - 0.5) * (isNight() ? 1.2 : 0.6),
+        vy: (Math.random() - 0.5) * (isNight() ? 1.2 : 0.6)
+      });
+    }
+
+    for (let i = 0; i < 6; i++) spawnEnemy();
+
+    canvas.addEventListener('click', e => {
+      if (gameOver) return;
+      if (energy < 8) return;
+
+      energy -= 8;
+
+      const mx = e.clientX;
+      const my = e.clientY;
+
+      particles.push({ x: mx, y: my, life: 30 });
+
+      enemies.forEach(enemy => {
+        const dx = enemy.x - mx;
+        const dy = enemy.y - my;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        const visible = !enemy.hidden || vision >= 2;
+
+        if (!visible) return;
+
+        if (dist < aoe) {
+          enemy.hp -= damage;
+        }
+      });
+
+      enemies = enemies.filter(enemy => {
+        if (enemy.hp <= 0) {
+          score += 12;
+          return false;
+        }
+        return true;
+      });
+    });
+
+    function buyDamage() {
+      if (score >= 25) {
+        score -= 25;
+        damage += 2;
+      }
+    }
+
+    function buyAOE() {
+      if (score >= 40) {
+        score -= 40;
+        aoe += 25;
+      }
+    }
+
+    function buyVision() {
+      if (score >= 50 && vision < 2) {
+        score -= 50;
+        vision++;
+      }
+    }
+
+    function endGame(win) {
+      gameOver = true;
+
+      const overlay = document.getElementById('overlay');
+      const title = document.getElementById('endTitle');
+      const text = document.getElementById('endText');
+
+      overlay.style.display = 'flex';
+
+      if (win) {
+        title.textContent = 'Победа';
+        text.textContent = 'Вы пережили акварельный цикл дня и ночи.';
+      } else {
+        title.textContent = 'Поражение';
+        text.textContent = 'Скрытые сущности захватили картину мира.';
+      }
+    }
+
+    function restart() {
+      location.reload();
+    }
+
+    function update() {
+      if (gameOver) return;
+
+      tick += 0.01;
+
+      if (Math.random() < (isNight() ? 0.04 : 0.02)) {
+        spawnEnemy();
+      }
+
+      enemies.forEach(enemy => {
+        enemy.x += enemy.vx;
+        enemy.y += enemy.vy;
+
+        if (enemy.x < 0 || enemy.x > canvas.width) enemy.vx *= -1;
+        if (enemy.y < 0 || enemy.y > canvas.height) enemy.vy *= -1;
+      });
+
+      particles.forEach(p => p.life--);
+      particles = particles.filter(p => p.life > 0);
+
+      energy = Math.min(100, energy + 0.05);
+
+      scoreEl.textContent = Math.floor(score);
+      energyEl.textContent = Math.floor(energy);
+      phaseEl.textContent = isNight() ? 'Ночь' : 'День';
+      enemyCountEl.textContent = enemies.length;
+
+      if (enemies.length > 18) {
+        endGame(false);
+      }
+    }
+
+    setInterval(() => {
+      if (gameOver) return;
+
+      timeLeft--;
+      timeEl.textContent = timeLeft;
+
+      if (timeLeft <= 0) {
+        endGame(true);
+      }
+    }, 1000);
+
+    function drawWatercolorBlob(x, y, r, color, alpha) {
+      for (let i = 0; i < 5; i++) {
+        ctx.beginPath();
+        ctx.fillStyle = color;
+        ctx.globalAlpha = alpha;
+
+        const offset = r * 0.3;
+
+        ctx.arc(
+          x + (Math.random() - 0.5) * offset,
+          y + (Math.random() - 0.5) * offset,
+          r + Math.random() * 12,
+          0,
+          Math.PI * 2
+        );
+
+        ctx.fill();
+      }
+
+      ctx.globalAlpha = 1;
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+
+      if (isNight()) {
+        gradient.addColorStop(0, '#30405f');
+        gradient.addColorStop(1, '#151b2c');
+      } else {
+        gradient.addColorStop(0, '#dcecff');
+        gradient.addColorStop(1, '#f7e7d3');
+      }
+
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      enemies.forEach(enemy => {
+        const visible = !enemy.hidden || vision >= 2;
+
+        drawWatercolorBlob(
+          enemy.x,
+          enemy.y,
+          enemy.r,
+          visible
+            ? 'rgba(190,70,110,0.55)'
+            : 'rgba(120,130,150,0.18)',
+          visible ? 0.4 : 0.12
+        );
+
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+        ctx.fillRect(
+          enemy.x - enemy.r,
+          enemy.y + enemy.r + 6,
+          (enemy.hp / enemy.maxHp) * enemy.r * 2,
+          5
+        );
+      });
+
+      particles.forEach(p => {
+        drawWatercolorBlob(
+          p.x,
+          p.y,
+          30 - p.life,
+          'rgba(120,90,220,0.4)',
+          p.life / 30
+        );
+      });
+
+      update();
+
+      requestAnimationFrame(render);
+    }
+
+    render();
+  </script>
+</body>
+</html>
